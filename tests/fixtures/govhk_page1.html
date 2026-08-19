@@ -1,0 +1,1120 @@
+
+
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>勞工處互動就業服務</title>
+    <link rel="icon" type="image/svg" href="/0/favicon.svg" />
+    <link rel="alternate icon" href="/0/favicon.ico" />
+    <link rel="mask-icon" href="/0/safari-pinned-tab.svg" color="#999999" />
+    <link rel="apple-touch-icon" href="/0/apple-touch-icon.png" />
+    <link href="/0/bundles/css/bootstrap?v=vJb6jf0pOLRhMENZGm2-gLOVm-Idb6mt_HHsyUYrnJY1" rel="stylesheet"/>
+
+    <link href="/0/bundles/css/slick?v=TW6FY8AA1_upV4D6uyECtQENOcwFFh_n31kR_ZI2ooI1" rel="stylesheet"/>
+
+    <link href="/0/bundles/css/common?v=ifKvfRTIJo9V44UxRAwCBdxcVgq6P0xf6kSPyrxrkgQ1" rel="stylesheet"/>
+
+    
+    <link href="/0/bundles/css/jobseeker?v=0lX8-Xs9pw5AtRBKuEAK64Gfigd6YbfuW0erkXX6u5E1" rel="stylesheet"/>
+
+    <link href="/0/Content/css/jquery.dataTables.min.css" rel="stylesheet"/>
+
+    <link href="/0/Content/css/jobseeker/QuickView.css?20220426" rel="stylesheet"/>
+
+    <link href="/0/Content/css/jobseeker/JobCard.css?20240415" rel="stylesheet"/>
+
+
+
+    <script src="/0/bundles/js/jquery?v=BoSfmZspPqgHtxMNT1zew5NwOCC60pVCQkMNAd9bE_g1"></script>
+
+    <script src="/0/bundles/js/bootstrap?v=aJ0b6hpHQZBE8bPTzrlt6JYmkNDzQo8XC81zG2fC3s81"></script>
+
+    <script src="/0/bundles/js/common?v=EnnN1Tj8AHF2G5yz6QVSCPcvMfSTOvwKxX33-FNhlNo1"></script>
+
+    <script src="/0/bundles/js/form/common?v=xDV7Rf9_rT7DZXShvxf6dNP-e3qxWwLl8JYs98ueSIE1"></script>
+
+    <script type="text/javascript">
+        var g_ies_indSchMain = 'N';
+        var g_ies_indSuspend = 'N';
+        var g_isApplyOnline = true;
+        var g_isMaxClipping = true;
+
+        var g_root = '/0';
+        var g_langOpt = 2;
+        var g_rootWithLang = '/0/tc';
+    </script>
+
+    
+    <script>
+        var easyApplUrl = '/0/tc/jobseeker/easyappl/';
+        var invalidUrl = "";
+        var ordNotFound = "";
+        $(function () {
+            $('#GoToPage').on('change', function () {
+                var confirmResult = confirm('將會導向其他分頁。要繼續?');
+                if (confirmResult) {
+                    var page = $(this).val();
+                    if (page != 1) {
+                        window.location.href = replaceUrlParam(window.location.href, "page", page);
+                    }
+                    return true;
+                } else {
+                    return false;
+                }
+            });
+            $('#sortingList').on('change', function () {
+                var confirmResult = confirm('排序將會更改。要繼續?');
+                if (confirmResult) {
+                    $('#sort_order_form').submit();
+                    return true;
+                } else {
+                    return false;
+                }
+            });
+        });
+    </script>
+    <script src="/0/Scripts/JobSeeker/JobCardCommon.js?20260720"></script>
+
+    <script src="/0/Scripts/JobSeeker/JobSearch.js?20260708"></script>
+
+
+</head>
+<body>
+        <div id="skiptocontent">
+            <a href="/" class="skiplink" title="跳至主要內容" onclick="event.preventDefault();document.getElementById('contentstartspan').focus();">跳至主要內容</a>
+        </div>
+    <header id="header-container" class="sticky-top" data-ies-base-tabindex="1000">
+
+        <nav id="logo-nav" class="navbar navbar-expand-md wrap" data-ies-base-tabindex="100">
+            <div id="mobile-navbar">
+                <a class="navbar-brand" href="/0/" data-ies-tabindex="1">
+                    <img alt="香港特別行政區政府 勞工處互動就業服務" class="img-fluid d-none d-sm-inline" src="/0/Image/tc/ies_logo_web.svg" />
+                    <img alt="香港特別行政區政府 勞工處互動就業服務" class="img-fluid d-inline d-sm-none" src="/0/Image/tc/ies_logo_mobile.svg" />
+                </a>
+                <div id="mobile_buttons" class="ml-auto">
+                    <div>
+                        <a class="navbar-toggler" href="#" role="button" data-toggle="collapse" data-target="#search" data-ies-tabindex="2" aria-controls="search" aria-expanded="false" aria-label="站內搜尋">
+                            <img alt="" src="/0/Image/common/JobSeeker/ies_icon_search.svg" />
+                        </a>
+                        <a class="navbar-toggler" href="#" role="button" data-toggle="collapse" data-target="#member" data-ies-tabindex="5" aria-controls="member" aria-expanded="false" aria-label="用戶專區">
+                            <img alt="" src="/0/Image/common/JobSeeker/user_icon.png" />
+                        </a>
+                        <a class="navbar-toggler" href="#" role="button" data-toggle="collapse" data-target="#language" data-ies-tabindex="12" aria-controls="language" aria-expanded="false" aria-label="更改語言">
+                            <img alt="" src="/0/Image/common/JobSeeker/language_icon.png" />
+                        </a>
+                        <a id="menunav-toggler" class="navbar-toggler collapsed" href="#" role="button" data-toggle="collapse" data-target="#menunav" data-ies-tabindex="17" aria-controls="menunav" aria-expanded="true" aria-label="選單">
+                            <span class="navbar-toggler-icon"></span>
+                        </a>
+                    </div>
+                </div>
+            </div>
+            <div class="collapse navbar-collapse" id="member" data-parent="header">
+                    <ul class="navbar-nav ml-md-auto my-1 my-md-0">
+                        <li id="login" class="nav-item dropdown">
+                            <a class="dropdown-toggle" href="#" id="loginDropdown" role="button" data-toggle="dropdown" data-ies-tabindex="6" data-ies-md-tabindex="2" aria-haspopup="true" aria-expanded="false">
+                                登入
+                            </a>
+                            <div class="dropdown-menu">
+                                <a href="/0/tc/jobseeker/login/" data-ies-tabindex="7" data-ies-md-tabindex="3"><img alt="" src="/0/Image/common/JobSeeker/ies_icon_jobseeker.svg" />求職人士</a>
+                                <a href="/0/tc/employer/login/" data-ies-tabindex="8" data-ies-md-tabindex="4"><img alt="" src="/0/Image/common/employer/ies_icon_employer.svg" />僱主</a>
+                            </div>
+                        </li>
+                        <li id="registration" class="nav-item dropdown">
+                            <a class="dropdown-toggle" href="#" id="registrationDropdown" role="button" data-toggle="dropdown" data-ies-tabindex="9" data-ies-md-tabindex="5" aria-haspopup="true" aria-expanded="false">
+                                登記
+                            </a>
+                            <div class="dropdown-menu">
+                                <a href="/0/tc/jobseeker/profile/agreement/" data-ies-tabindex="10" data-ies-md-tabindex="6"><img alt="" src="/0/Image/common/JobSeeker/ies_icon_jobseeker.svg" />求職人士</a>
+                                <a href="/0/tc/employer/registration/regform/" data-ies-tabindex="11" data-ies-md-tabindex="7"><img alt="" src="/0/Image/common/employer/ies_icon_employer.svg" />僱主</a>
+                            </div>
+                        </li>
+                    </ul>
+            </div>
+            <div class="collapse navbar-collapse" id="search" data-parent="header">
+                <div class="form-inline my-1 my-lg-0 flex-nowrap">
+                    <input id="uxSiteSearch" class="form-control mr-sm-2" type="search" placeholder="輸入查詢字串" data-ies-tabindex="3" data-ies-md-tabindex="8" aria-label="Search">
+                    <span class="sr-only">輸入查詢字串</span>
+                    <a href="#" role="button" onclick="govSearch(); return false;" title="站內搜尋 於新視窗顯示" data-ies-tabindex="4" data-ies-md-tabindex="9"><img src="/0/Image/common/JobSeeker/ies_icon_search.svg" alt="站內搜尋" title="站內搜尋" /></a>
+                </div>
+            </div>
+        </nav>
+        <nav id="language-nav" class="navbar navbar-expand-md wrap order-md-first mt-md-2" data-ies-base-tabindex="100">
+            <div class="collapse navbar-collapse justify-content-end" id="language" data-parent="header">
+                <ul class="nav ml-3 ml-md-0 my-1 my-md-0">
+                    <li><a href="/0/tc/jobseeker/jobsearch/quickview/gbayes/?page=1" data-disable-change-link data-ies-tabindex="13" data-ies-md-tabindex="10">繁</a></li>
+                    <li><a href="/0/cn/jobseeker/jobsearch/quickview/gbayes/?page=1" data-disable-change-link data-ies-tabindex="14" data-ies-md-tabindex="11">简</a></li>
+                    <li><a href="/0/en/jobseeker/jobsearch/quickview/gbayes/?page=1" data-disable-change-link data-ies-tabindex="15" data-ies-md-tabindex="12">Eng</a></li>
+                    <li><a href="/0/tc/information/textsize/" data-ies-tabindex="16" data-ies-md-tabindex="13">文字大小</a></li>
+                </ul>
+            </div>
+        </nav>
+        <nav class="navbar navbar-expand-md menubar" data-ies-base-tabindex="200">
+            <div class="collapse navbar-collapse wrap" id="menunav" data-parent="header">
+                <ul class="navbar-nav menu-nav">
+                    <li class="menu">
+                        <a id="jobseekerMenuToggle" href="#" class="menu-toggle collapsed active" role="button" data-toggle="collapse" data-target="#jobseekerMenu" aria-controls="jobseekerMenu" aria-expanded="false" aria-label="求職人士">求職人士</a>
+                        <div id="jobseekerMenu" class="collapse menu-collapse" data-parent="#menunav">
+                            <div class="wrap">
+                                <img class="d-none d-lg-block" src="/0/Image/common/JobSeeker/icon_menu_jobseeker.svg" alt="" role="presentation" />
+                                <ul class="navbar-nav w-100">
+                                    <li id="jsUserAreaMenuItem" class="nav-item dropdown submenu">
+                                        <a id="jsUserAreaLabel" class="submenu-toggle" href="#" role="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                                            <img alt="" src="/0/Image/common/JobSeeker/job_icon_menu_user_area.svg" />
+                                            用戶專區
+                                        </a>
+                                        <div id="jsUserAreaSubmenu" class="dropdown-menu">
+                                                <a class="dropdown-item" href="/0/tc/jobseeker/profile/agreement/">用戶登記</a>
+                                                <a class="dropdown-item" href="/0/tc/jobseeker/login/">用戶登入</a>
+                                                <a class="dropdown-item" href="/0/tc/jobseeker/member/forgotpassword/">忘記密碼</a>
+                                            <a class="dropdown-item" href="/0/tc/jobseeker/clipboard/">我的空缺</a>
+                                            <a class="dropdown-item" href="/0/tc/jobseeker/nop/">成功就業</a>
+                                            <a class="dropdown-item" href="/0/tc/jobseeker/functionlist/">功能介紹</a>
+                                        </div>
+                                    </li>
+                                    <li id="jsJobSearchMenuItem" class="nav-item dropdown submenu">
+                                        <a id="jsJobSearchLabel" class="submenu-toggle" href="#" role="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                                            <img alt="" src="/0/Image/common/JobSeeker/job_icon_menu_job_search.svg" />
+                                            空缺搜尋
+                                        </a>
+                                        <div id="jsJobSearchSubmenu" class="dropdown-menu">
+                                            <a class="dropdown-item" href="javascript:forceRedirect('/0/#quickSearchTab');">快速搜尋</a>
+                                            <a class="dropdown-item" href="/0/tc/jobseeker/jobsearch/search/">進階搜尋</a>
+                                            <a class="dropdown-item" href="javascript:forceRedirect('/0/#typeSearchTab');">空缺總覽</a>
+                                            <a class="dropdown-item" href="javascript:forceRedirect('/0/#jobFairDiv');">招聘會</a>
+                                            <a class="dropdown-item" href="/tc/esls/jobfair/?v2">「補充勞工優化計劃」招聘會</a>
+                                            <a class="dropdown-item" href="javascript:forceRedirect('/0/#customCalendar_btn');">空缺日曆</a>
+                                        </div>
+                                    </li>
+                                    <li id="jsWebpageOnVacanciesMenuItem" class="nav-item dropdown submenu">
+                                        <a id="jsWebpageOnVacanciesLabel" class="submenu-toggle" href="#" role="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                                            <img alt="" src="/0/Image/common/JobSeeker/job_icon_menu_webpages_vacancies.svg" />
+                                            職位空缺專頁
+                                        </a>
+                                        <div id="jsWebpageOnVacanciesSubmenu" class="dropdown-menu">
+                                            <a class="dropdown-item" href="/0/tc/jobseeker/parttime/searchparttimejob/?from=home">兼職空缺</a>
+                                            <a class="dropdown-item" href="/0/tc/jobseeker/jobsearch/quickview/careservices/">安老及復康服務業空缺</a>
+                                            <a class="dropdown-item" href="/0/tc/jobseeker/ci/#majorPost">飲食業空缺</a>
+                                            <a class="dropdown-item" href="/0/tc/jobseeker/ri/#majorPost">零售業空缺</a>
+                                            <a class="dropdown-item" href="/0/tc/jobseeker/coni/#majorPost">建造業空缺</a>
+                                            <a class="dropdown-item" href="/0/tc/jobseeker/jobsearch/quickview/hee/">高等學歷空缺</a>
+                                            <a class="dropdown-item" href="/0/tc/jobseeker/jobsearch/quickview/summer/">暑期工空缺</a>
+                                            <a class="dropdown-item" href="/0/tc/jobseeker/jobsearch/quickview/esls/">「補充勞工優化計劃」空缺</a>
+                                            <a class="dropdown-item" href="/0/tc/jobseeker/jobsearch/quickview/gbayes/">「大灣區青年就業計劃」空缺</a>
+                                            <div class="sub-submenu dropdown-item">
+                                                <a id="epemVacMenuLink" class="sub-submenu-toggle" href="#epemVacDropdown" role="button" data-target="#epemVacDropdown" data-parent="#jsWebpageOnVacanciesSubmenu" aria-haspopup="true" aria-expanded="false">
+                                                    「中高齡就業計劃」空缺
+                                                </a>
+                                                <div id="epemVacDropdown" class="sub-submenu-menu mt-1">
+                                                    <a class="dropdown-item" href="/0/tc/jobseeker/jobsearch/quickview/fulltime_epem/">全職</a>
+                                                    <a class="dropdown-item" href="/0/tc/jobseeker/jobsearch/quickview/parttime_epem/">兼職</a>
+                                                </div>
+                                            </div>
+                                            <div class="sub-submenu dropdown-item">
+                                                <a id="naVacMenuLink" class="sub-submenu-toggle" href="#naVacDropdown" role="button" data-target="#naVacDropdown" data-parent="#jsWebpageOnVacanciesSubmenu" aria-haspopup="true" aria-expanded="false">
+                                                    歡迎內地新來港人士空缺
+                                                </a>
+                                                <div id="naVacDropdown" class="sub-submenu-menu mt-1">
+                                                    <a class="dropdown-item" href="/0/tc/jobseeker/jobsearch/quickview/fulltime_na/">全職</a>
+                                                    <a class="dropdown-item" href="/0/tc/jobseeker/jobsearch/quickview/parttime_na/">兼職</a>
+                                                </div>
+                                            </div>
+                                            <a class="dropdown-item" href="/0/tc/jobseeker/jobsearch/quickview/cru/">政府非公務員合約職位空缺</a>
+                                            <div class="sub-submenu dropdown-item">
+                                                <a id="welcomeEpemVacMenuLink" class="sub-submenu-toggle" href="#welcomeEpemVacDropdown" role="button" data-target="#welcomeEpemVacDropdown" data-parent="#jsWebpageOnVacanciesSubmenu" aria-haspopup="true" aria-expanded="false">
+                                                    歡迎中高齡人士空缺
+                                                </a>
+                                                <div id="welcomeEpemVacDropdown" class="sub-submenu-menu mt-1">
+                                                    <a class="dropdown-item" href="/0/tc/jobseeker/jobsearch/quickview/welcome_elderly_fulltime/">全職</a>
+                                                    <a class="dropdown-item" href="/0/tc/jobseeker/jobsearch/quickview/welcome_elderly_parttime/">兼職</a>
+                                                </div>
+                                            </div>
+                                            <a class="dropdown-item" href="/0/tc/jobseeker/jobsearch/quickview/program/eps/">特別就業服務空缺</a>
+                                            <a class="dropdown-item" href="/0/tc/jobseeker/jobsearch/quickview/nss/">「就業啟航」空缺</a>
+                                        </div>
+                                    </li>
+                                    <li id="jsDedicatedWebpageMenuItem" class="nav-item dropdown submenu">
+                                        <a id="jsDedicatedWebpageLabel" class="submenu-toggle" href="#" role="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                                            <img alt="" src="/0/Image/common/JobSeeker/job_icon_menu_dedicated_webpages.svg" />
+                                            專題網頁
+                                        </a>
+                                        <div id="jsDedicatedWebpageSubmenu" class="dropdown-menu">
+                                            <a class="dropdown-item" href="/0/tc/jobseeker/parttime/">兼職職位專頁</a>
+                                            <a class="dropdown-item" href="/0/tc/jobseeker/elderlyandrehab/">安老及復康服務業專頁</a>
+                                            <a class="dropdown-item" href="/0/tc/information/gbayes/">大灣區青年就業計劃專頁</a>
+                                            <a class="dropdown-item" href="/0/tc/jobseeker/elderly/">年長求職人士專頁</a>
+                                            <a class="dropdown-item" href="/0/tc/jobseeker/na/">內地新來港人士專頁</a>
+                                            <div class="group-menu">
+                                                <a class="dropdown-item group-header-item" href="/0/tc/jobseeker/industry/">飲食、零售及建造業專頁</a>
+                                                <div class="dropdown-item group-submenu">
+                                                    <a class="dropdown-item group-item text-wrap" href="/0/tc/jobseeker/ci/">飲食業專頁</a>
+                                                    <a class="dropdown-item group-item text-wrap" href="/0/tc/jobseeker/ri/">零售業專頁</a>
+                                                    <a class="dropdown-item group-item text-wrap" href="/0/tc/jobseeker/coni/">建造業專頁</a>
+                                                </div>
+                                            </div>
+                                            <a class="dropdown-item" href="/0/tc/jobseeker/hee/">高等學歷就業專頁</a>
+                                            <a class="dropdown-item" href="/0/tc/jobseeker/summer/">暑期工就業資訊網</a>
+                                            <a class="dropdown-item" href="/0/tc/information/launchyourcareer/">就業啟航</a>
+                                        </div>
+                                    </li>
+                                    <li id="jsEmploymentInfoMenuItem" class="nav-item dropdown submenu">
+                                        <a id="jsEmploymentInfoLabel" class="submenu-toggle" href="#" role="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                                            <img alt="" src="/0/Image/common/JobSeeker/job_icon_menu_em_info.svg" />
+                                            就業資訊
+                                        </a>
+                                        <div id="jsEmploymentInfoSubmenu" class="dropdown-menu">
+                                            <a class="dropdown-item" href="/0/tc/jobseeker/jhbc/">求職公事包</a>
+                                            <a class="dropdown-item" href="/0/Doc/jobseeker/tc/vst/VST_Distribution.pdf?20260715" target="_blank">空缺搜尋終端機分布表 (291KB)</a>
+                                        </div>
+                                    </li>
+                                </ul>
+                            </div>
+                        </div>
+                    </li>
+                    <li class="menu">
+                        <a id="employerMenuToggle" href="#" class="menu-toggle collapsed " role="button" data-toggle="collapse" data-target="#employerMenu" aria-controls="employerMenu" aria-expanded="false" aria-label="僱主">僱主</a>
+                        <div id="employerMenu" class="collapse menu-collapse" data-parent="#menunav">
+                            <div class="wrap">
+                                <img class="d-none d-lg-block" src="/0/Image/common/employer/icon_menu_employer.svg" alt="" role="presentation" />
+                                <ul class="navbar-nav w-100">
+                                    <li id="empUserAreaMenuItem" class="nav-item dropdown submenu">
+                                        <a id="empUserAreaLabel" class="submenu-toggle" href="#" role="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                                            <img alt="" src="/0/Image/common/employer/job_icon_menu_er_user_area.svg" />
+                                            用戶專區
+                                        </a>
+                                        <div id="empUserAreaSubmenu" class="dropdown-menu">
+                                                <a class="dropdown-item" href="/0/tc/employer/registration/regform/">用戶登記</a>
+                                                <a class="dropdown-item" href="/0/tc/employer/login/">用戶登入</a>
+                                                <a class="dropdown-item" href="/0/tc/employer/registration/forgotpassword/">忘記密碼</a>
+                                                <a class="dropdown-item" href="/0/tc/employer/login/?redirect=vof_main">刊登空缺</a>
+                                                <a class="dropdown-item" href="/0/tc/employer/memberhome/">修改/取消空缺</a>
+                                            <a class="dropdown-item" href="/0/tc/employer/functionlist/">功能介紹</a>
+                                        </div>
+                                    </li>
+                                    <li id="empEmploymentInfoMenuItem" class="nav-item dropdown submenu">
+                                        <a id="empEmploymentInfoLabel" class="submenu-toggle" href="#" role="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                                            <img alt="" src="/0/Image/common/employer/job_icon_menu_er_recruit_info.svg" />
+                                            招聘資訊
+                                        </a>
+                                        <div id="empEmploymentInfoSubmenu" class="dropdown-menu">
+                                            <a class="dropdown-item" href="/0/tc/employer/rcbc/">招聘公事包</a>
+                                            <a class="dropdown-item" href="/0/tc/employer/countontalent/">不論年齡 唯才是用</a>
+                                            <a class="dropdown-item" href="https://www.labour.gov.hk/tc/public/wcp/promote_employment_of_mature_persons.pdf" target="_blank">共建銀齡友善職場（1.26 MB）</a>
+                                            <a class="dropdown-item" href="/0/doc/employer/eip/tc/support_em.pdf?20260331" target="_blank">支持聘用少數族裔人士（7.29MB）</a>
+                                        </div>
+                                    </li>
+                                </ul>
+                            </div>
+                        </div>
+                    </li>
+                    <li class="menu">
+                        <a id="informationMenuToggle" href="#" class="menu-toggle collapsed " role="button" data-toggle="collapse" data-target="#informationMenu" aria-controls="informationMenu" aria-expanded="false" aria-label="資訊">資訊</a>
+                        <div id="informationMenu" class="collapse menu-collapse" data-parent="#menunav">
+                            <div class="wrap">
+                                <img class="d-none d-lg-block" src="/0/Image/common/information/icon_menu_info.svg" alt="" role="presentation" style="transform: rotate(180deg);" />
+                                <ul class="navbar-nav w-100">
+                                    <li id="infoOurServicesMenuItem" class="nav-item dropdown submenu">
+                                        <a id="infoOurServicesLabel" class="submenu-toggle" href="#" role="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                                            <img alt="" src="/0/Image/common/information/job_icon_menu_info_ourser.svg" />
+                                            我們的服務
+                                        </a>
+                                        <div id="infoOurServicesSubmenu" class="dropdown-menu">
+                                            <a class="dropdown-item" href="/0/tc/information/ourservices/findjobs/">求職</a>
+                                            <a class="dropdown-item" href="/0/tc/information/ourservices/recruit/">招聘</a>
+                                            <a class="dropdown-item" href="/0/tc/information/ourservices/empservices/">就業服務</a>
+                                            <a class="dropdown-item" href="/0/tc/information/ourservices/spd/">展能就業科</a>
+                                            <a class="dropdown-item" href="/0/tc/information/ourservices/jobcentres/">就業中心</a>
+                                        </div>
+                                    </li>
+                                    <li id="infoSpEmpProgMenuItem" class="nav-item dropdown submenu">
+                                        <a id="infoSpEmpProgLabel" class="submenu-toggle" href="#" role="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                                            <img alt="" src="/0/Image/common/information/job_icon_menu_info_spec_prog.svg" />
+                                            勞工處特別就業計劃
+                                        </a>
+                                        <div id="infoSpEmpProgSubmenu" class="dropdown-menu">
+                                            <a class="dropdown-item font-weight-bold" href="/0/tc/information/employmentprogrammes/">勞工處「就業計劃」一覽表</a>
+                                            <a class="dropdown-item" href="/0/tc/information/rea/">再就業津貼試行計劃</a>
+                                            <a class="dropdown-item" href="/0/tc/information/epem/">中高齡就業計劃</a>
+                                            <a class="dropdown-item" href="/isps/WebForm/Wops/default.aspx?RunMode=Chinese&sc=0" target="_blank">就業展才能計劃</a>
+                                            <a class="dropdown-item" href="https://www.yes.labour.gov.hk/Home?c=zh-hk" target="_blank">展翅青年就業計劃</a>
+                                            <a class="dropdown-item" href="/0/tc/information/gbayes/">大灣區青年就業計劃</a>
+                                        </div>
+                                    </li>
+                                    <li id="infoOthEmpInfoMenuItem" class="nav-item dropdown submenu">
+                                        <a id="infoOthEmpInfoLabel" class="submenu-toggle" href="#" role="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                                            <img alt="" src="/0/Image/common/information/job_icon_menu_info_other_em_info.svg" />
+                                            其他就業資訊
+                                        </a>
+                                        <div id="infoOthEmpInfoSubmenu" class="dropdown-menu">
+                                            <a class="dropdown-item" href="/0/tc/information/mainland/">內地就業資訊</a>
+                                            <a class="dropdown-item" href="/0/tc/information/macao/">澳門就業資訊</a>
+                                            <a class="dropdown-item" href="https://www.labour.gov.hk/tc/plan/whs.htm" target="_blank">工作假期計劃</a>
+                                            <a class="dropdown-item" href="/0/tc/information/mainlandtalent/">輸入內地人才計劃</a>
+                                            
+                                        </div>
+                                    </li>
+                                    <li id="infoUsefulInfoMenuItem" class="nav-item dropdown submenu">
+                                        <a id="infoUsefulInfoLabel" class="submenu-toggle" href="#" role="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                                            <img alt="" src="/0/Image/common/information/job_icon_menu_info_useful_info.svg" />
+                                            實用資訊
+                                        </a>
+                                        <div id="infoUsefulInfoSubmenu" class="dropdown-menu">
+                                            <a class="dropdown-item" href="/0/tc/information/infodownload/">表格下載</a>
+                                            <a class="dropdown-item" href="/0/tc/information/infotopten/">空缺排行榜</a>
+                                            <a class="dropdown-item" href="https://www.labour.gov.hk/tc/public/content2_5.htm" target="_blank">勞工處就業服務刊物</a>
+                                            <a class="dropdown-item" href="/0/tc/information/uei/statistics/">統計數據</a>
+                                            <a class="dropdown-item" href="/0/tc/information/infomanpowersurvey/">人力調查報告</a>
+                                            <a class="dropdown-item" href="/0/tc/information/infopractical/">相關連結</a>
+                                        </div>
+                                    </li>
+                                </ul>
+                            </div>
+                        </div>
+                    </li>
+                </ul>
+            </div>
+            <div id="language-float" class="justify-content-end" style="display:none;" data-parent="header">
+                <ul class="nav ml-3 ml-md-0 my-1 my-md-0">
+                    <li><a href="/0/tc/jobseeker/jobsearch/quickview/gbayes/?page=1" data-disable-change-link>繁</a></li>
+                    <li><a href="/0/cn/jobseeker/jobsearch/quickview/gbayes/?page=1" data-disable-change-link>简</a></li>
+                    <li><a href="/0/en/jobseeker/jobsearch/quickview/gbayes/?page=1" data-disable-change-link>Eng</a></li>
+                    <li><a href="/0/tc/information/textsize/">文字大小</a></li>
+                </ul>
+            </div>
+        </nav>
+    </header>
+
+<link href="/0/Content/css/jobseeker/form.css?20210728" rel="stylesheet" />
+<link href="/0/Content/css/jobseeker/search_bar.css?20210728" rel="stylesheet" />
+
+<form action="/0/tc/jobseeker/jobsearch/simple/" method="post"><input id="Criteria_filterId" name="Criteria.filterId" type="hidden" value="" />    <div id="jobseekerSearchBar" style="background: linear-gradient(to right,#007FAC,#00A68D);" data-ies-base-tabindex="400">
+        <a id="searchBar-toggle" class="btn d-block d-md-none" data-toggle="collapse" href="#searchBarContent" role="button" aria-expanded="false" aria-controls="searchBarContent">
+            <img src="/0/image/common/common/ies_job_but_filter.svg" alt="" role="presentation" />
+            <span>選擇搜尋條件</span>
+        </a>
+        <div id="searchBarContent" class="row no-gutters pt-3 pr-3 mx-auto collapse" style="max-width:1280px;">
+            <div class="col no-gutters d-flex flex-wrap">
+                    <div class="col-12 col-md-6 col-lg-4 pl-3">
+                        <div class="input-group">
+                            <div class="input-group-prepend">
+                                <label for="simp_JobType" class="input-group-text input-group-text-last" style="background-color:white">
+                                    <img src="/0/Image/common/JobSeeker/ies_job_fill_but1.svg" alt="" role="presentation" />
+                                </label>
+                            </div>
+                            <span class="sr-only">空缺類別</span>
+                            <select class="form-control" data-ies-md-tabindex="2" id="simp_JobType" name="Criteria.jobType" onchange="return simp_handleChangeJobType(this)"><option value="">空缺類別</option>
+<option value="1">會計</option>
+<option value="2">收銀員</option>
+<option value="4">清潔</option>
+<option value="3">文員</option>
+<option value="5">電腦及資訊科技</option>
+<option value="6">建築/測量</option>
+<option value="8">廚師/侍應</option>
+<option value="7">客戶服務</option>
+<option value="10">跟車/送貨</option>
+<option value="9">設計/繪圖</option>
+<option value="12">家務助理</option>
+<option value="11">司機</option>
+<option value="13">工程</option>
+<option value="14">非技術工人/雜工</option>
+<option value="15">管理/行政</option>
+<option value="22">營業代表/推廣/售貨員</option>
+<option value="16">採購</option>
+<option value="19">辦公室助理</option>
+<option value="20">生產/工廠職位</option>
+<option value="21">接待員 </option>
+<option value="25">秘書</option>
+<option value="31">物業管理/保安員</option>
+<option value="23">倉務</option>
+<option value="26">教師/導師</option>
+<option value="27">技工</option>
+<option value="28">導遊</option>
+<option value="30">打字</option>
+<option value="18">其他專業人員/輔助專業人員</option>
+<option value="17">其他</option>
+</select>
+                            <select data-ies-multiple-select-view="jobtitle" hidden="hidden" id="simp_jobTitleForView" multiple="multiple" name="simp_jobTitleForView"></select>
+                        </div>
+                    </div>
+                                    <div class="col-12 col-md-6 col-lg-4 pl-3">
+                        <div class="input-group">
+                            <div class="input-group-prepend">
+                                <label for="simp_PostTitle" class="input-group-text input-group-text-last" style="background-color:white">
+                                    <img src="/0/Image/common/JobSeeker/ies_job_fill_but1.svg" alt="" role="presentation" />
+                                </label>
+                            </div>
+                            <span class="sr-only">所有職位</span>
+                            <select class="form-control" data-ies-md-tabindex="2" data-ies-multiple-select="jobtitle" data-ies-multiple-select-onselect="simp_handleSelectPostTitle" id="simp_PostTitle" multiple="multiple" name="Criteria.selectedJobTitle" size="1"></select>
+                        </div>
+                    </div>
+                <div class="col-12 col-md-6 col-lg-4 pl-3">
+                    <div class="input-group">
+
+                        <div class="input-group-prepend">
+                            <label for="simp_Loc" class="input-group-text input-group-text-last" style="background-color:#fff">
+                                <img src="/0/Image/common/common/ies_job_fill_but3.svg" alt="" role="presentation" />
+                            </label>
+                        </div>
+                        <span class="sr-only">工作地點</span>
+                        <select class="form-control" data-ies-md-tabindex="3" data-ies-multiple-select="districts" data-ies-multiple-select-onselect="simp_handleSelectWkLoc" id="simp_Loc" multiple="multiple" name="Criteria.selectedDistricts" size="1"><option value="141">東莞</option>
+<option value="142">佛山</option>
+<option value="143">廣州</option>
+<option value="146">江門</option>
+<option value="150">深圳</option>
+<option value="155">珠海</option>
+<option value="156">中山</option>
+<option value="152">惠州</option>
+<option value="255">肇慶</option>
+</select>
+                    </div>
+                </div>
+                <div class="col-12 col-md-6 col-lg-3 pl-3 order-md-1 text-left">
+                    <div class="customCheckBoxDiv">
+                        <label class="custom-checkbox-black">
+                            顯示更多空缺<br/>（包括港九新界）
+                            <input class="custom-control-input" data-ies-md-tabindex="8" id="simp_displayMoreVac" name="Criteria.displayMoreVac" type="checkbox" value="true" /><input name="Criteria.displayMoreVac" type="hidden" value="false" />
+                            <span class="custom-checkmark-black"></span>
+                        </label>
+                    </div>
+                </div>
+                <div class="col-12 col-md-6 col-lg-4 pl-3">
+                    <div class="input-group">
+
+                        <div class="input-group-prepend">
+                            <label for="simp_Inds" class="input-group-text input-group-text-last" style="background-color:#fff">
+                                <img src="/0/Image/common/JobSeeker/ies_job_fill_but2.svg" alt="" role="presentation" />
+                            </label>
+                        </div>
+                        <span class="sr-only">行業</span>
+                        <select class="form-control" data-ies-md-tabindex="4" id="simp_Inds" name="Criteria.industry"><option value="">行業</option>
+<option value="20">商用服務業</option>
+<option value="-1">飲食業</option>
+<option value="16">通訊業</option>
+<option value="26">建造業</option>
+<option value="24">住戶服務業</option>
+<option value="21">教育服務業</option>
+<option value="17">金融業</option>
+<option value="1">政府部門</option>
+<option value="2">醫院</option>
+<option value="13">酒店業</option>
+<option value="11">進出口貿易</option>
+<option value="18">保險業</option>
+<option value="7">電子製品業</option>
+<option value="6">金屬製品業</option>
+<option value="5">塑膠製品業</option>
+<option value="4">紡織業</option>
+<option value="3">服裝製品業</option>
+<option value="19">地產業</option>
+<option value="-2">零售業</option>
+<option value="15">倉庫業</option>
+<option value="14">運輸業</option>
+<option value="22">福利機構</option>
+<option value="9">批發業</option>
+<option value="23">其他社區及社會服務業</option>
+<option value="8">其他製造業</option>
+<option value="25">其他個人服務業</option>
+<option value="27">其他</option>
+</select>
+                    </div>
+                </div>
+                <div class="col-12 col-lg-8 pl-3">
+                    <div class="salary" style="display:flex">
+                        <div class="input-group">
+
+                            <div class="input-group-prepend">
+                                <label for="simp_SalaryFr" class="input-group-text" style="background-color:#fff">薪酬 由</label>
+                            </div>
+                            <select class="form-control" data-ies-md-tabindex="5" id="simp_SalaryFr" name="Criteria.salaryFr" style="border-top-right-radius: 0px; border-bottom-right-radius: 0px;"><option selected="selected" value=""></option>
+<option value="10001">港幣 $ 10,001元</option>
+<option value="11001">港幣 $ 11,001元</option>
+<option value="12001">港幣 $ 12,001元</option>
+<option value="13001">港幣 $ 13,001元</option>
+<option value="14001">港幣 $ 14,001元</option>
+<option value="15001">港幣 $ 15,001元</option>
+<option value="16001">港幣 $ 16,001元</option>
+<option value="17001">港幣 $ 17,001元</option>
+<option value="18001">港幣 $ 18,001元</option>
+<option value="19001">港幣 $ 19,001元</option>
+<option value="20001">港幣 $ 20,001元</option>
+<option value="25001">港幣 $ 25,001元</option>
+<option value="30001">港幣 $ 30,001元</option>
+</select>
+                        </div>
+                        <div class="input-group">
+                            <div class="input-group-prepend">
+                                <label for="simp_SalaryTo" class="input-group-text" style="background-color:#fff; border-radius:0;">
+                                    <span class="d-sm-none">薪酬 &nbsp;</span>
+                                    至
+                                </label>
+                            </div>
+                            <select class="form-control" data-ies-md-tabindex="6" id="simp_SalaryTo" name="Criteria.salaryTo" style="border-top-left-radius: 0px; border-bottom-left-radius: 0px;"><option selected="selected" value=""></option>
+<option value="11000">港幣 $ 11,000元</option>
+<option value="12000">港幣 $ 12,000元</option>
+<option value="13000">港幣 $ 13,000元</option>
+<option value="14000">港幣 $ 14,000元</option>
+<option value="15000">港幣 $ 15,000元</option>
+<option value="16000">港幣 $ 16,000元</option>
+<option value="17000">港幣 $ 17,000元</option>
+<option value="18000">港幣 $ 18,000元</option>
+<option value="19000">港幣 $ 19,000元</option>
+<option value="20000">港幣 $ 20,000元</option>
+<option value="21000">港幣 $ 21,000元</option>
+<option value="25000">港幣 $ 25,000元</option>
+<option value="30000">港幣 $ 30,000元 以上</option>
+</select>
+                        </div>
+                    </div>
+                </div>
+                    <div class="col-12 col-lg-4 pl-3">
+                        <div class="input-group">
+                            <div class="input-group-prepend">
+                                <label for="simp_searchKeyword" class="input-group-text input-group-text-last" style="background-color:white">
+                                    <img src="/0/Image/common/JobSeeker/ies_job_fill_but4.svg" alt="" role="presentation" />
+                                </label>
+                            </div>
+                            <input class="form-control" data-ies-md-tabindex="7" id="simp_searchKeyword" name="Criteria.searchField" placeholder="搜尋 關鍵字" type="text" value="" />
+                            <span class="sr-only">搜尋 關鍵字</span>
+                            <input id="Criteria_searchByOption" name="Criteria.searchByOption" type="hidden" value="1" />
+                        </div>
+                    </div>
+                <div class="col-12 col-md-6 col-lg-4 pl-3 order-md-2">
+                    <div class="input-group">
+                        <input id="simp_specEmpProgram" name="Criteria.specEmpProgram" type="hidden" value="" />
+                        <input id="simp_searchfor" name="SearchFor" type="hidden" value="gbayes" />
+                        <input id="RefineSearch" name="RefineSearch" type="hidden" value="True" />
+                            <div class="badge bg-warning w-100" style="font-size:1.25rem;">
+                                <span>搜尋:</span>
+                                <span style="white-space:normal;">大灣區青年就業計劃空缺（所有職位）</span>
+                                    <button type="button" class="close" onclick="return simp_handleClickClearSearchFor(this);" aria-label="Close">
+                                        <span aria-hidden="true">×</span>
+                                    </button>
+                            </div>
+                    </div>
+                </div>
+                <div class="col-lg order-md-2 mb-3 px-3 home_search_btn">
+                    <div class="row no-gutters" style="justify-content:flex-end;">
+                        <div class="d-none">
+                            <input id="simpJobSearchInside_IsMobile" name="IsMobile" type="text" value="False" />
+                            <input id="isMobileTopBar" name="isMobile" type="hidden" value="false">
+                        </div>
+                        <div class="col-md-12 col-lg-4 d-flex" style="justify-content:flex-end;">
+                            <input type="button" name="Search" class="form-button mr-2" value="重設" id="btnReset" title="重設" onclick="return simp_handleClickReset()" data-ies-md-tabindex="9" />
+                            <input type="submit" name="Search" class="form-button" value="搜尋" id="btnSearch" title="搜尋空缺" onclick="return simp_handleClickSearch(this);" data-ies-md-tabindex="10" aria-label="搜尋空缺" />
+                        </div>
+                        <div class="col-md-12 col-lg-auto d-flex">
+                                <a href="/0/tc/jobseeker/jobsearch/search/gbayes/?refine=True" class="form-button w-100 text-center" title="返回剛選擇的求職條件" data-ies-md-tabindex="11">
+                                    <img src="/0/Image/common/common/ies_job_but7_white.svg" alt="返回剛選擇的求職條件" role="presentation" />
+                                    <span>返回剛選擇的求職條件</span>
+                                </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</form><script src="/0/Scripts/JobSeeker/search_common.js?20260706" type="text/javascript"></script>
+<script src="/0/Scripts/multipleSelect.js?20210811" type="text/javascript"></script>
+<script src="/0/Scripts/JobSeeker/simplifed_search.js?20260720" type="text/javascript"></script>
+
+    <div class="container-fluid wrap" data-ies-base-tabindex="500">
+        
+    </div>
+    <div id="content-div" data-ies-base-tabindex="2000">
+        <div id="skiptocontent">
+            <span id="contentstartspan" tabindex="-1"></span>
+        </div>
+
+
+<script>
+    var g_hidePrevNextJobCardGt768 = true;
+    var g_selectedJobOrder = '';
+</script>
+
+<div id="content-innerdiv">
+    <input id="uxSearchKeyword" name="searchKeyword" type="hidden" value="," />
+    <div class="container-fluid">
+        <div class="row justify-content-between">
+                <div class="col-md-4 d-none d-md-block pb-2">
+                    共約 <strong id="totalRecord">450</strong> 項結果
+                        ，這是第 <strong>1</strong> 至 <strong>20</strong> 份
+                </div>
+            <div class="col-md-8 d-md-flex align-items-center d-none flex-nowrap pb-2">
+                <span class="col-auto">顯示模式</span>
+                <div class="col-auto">
+                    <img src="/0/Image/common/common/ies_job_but1.svg" alt="快速閱覽" title="快速閱覽" />
+                </div>
+                <a class="col-auto" href="/0/tc/jobseeker/jobsearch/joblist/gbayes/?page=1" title="空缺摘要" data-disable-change-link>
+                    <img style="opacity:0.5;" src="/0/Image/common/common/ies_job_but2.svg" alt="空缺摘要" title="空缺摘要" />
+                </a>
+            </div>
+        </div>
+    </div>
+    <div class="container-fluid">
+        <div class="row">
+            <div class="col-md-4 d-none d-md-block pl-0">
+                <div class="bg-white">
+                    <div class="p-3">
+                        <div class="mb-2">搜尋結果排序</div>
+                        <div class="input-group mb-3 mr-3 search_order">
+<form action="/0/tc/jobseeker/jobsearch/quickview/gbayes/?page=1&amp;direct=False" class="w-100" id="sort_order_form" method="get"><select class="w-100" id="sortingList" name="SortType" title="搜尋結果排序"><option selected="selected" value="post_dt_desc">空缺刊登日期由近至遠</option>
+<option value="post_dt_asc">空缺刊登日期由遠至近</option>
+<option value="salary_desc">薪酬（以月入計）由多至少</option>
+<option value="salary_asc">薪酬（以月入計）由少至多</option>
+<option value="yr_exp_asc">有關工作經驗由少至多</option>
+<option value="yr_exp_desc">有關工作經驗由多至少</option>
+<option value="edu_lvl_asc">教育程度由低至高</option>
+<option value="edu_lvl_desc">教育程度由高至低</option>
+</select>                                <input type="hidden" name="page" value="1" />
+                                <input type="hidden" name="direct" value="false" />
+</form>                        </div>
+                    </div>
+                    <div id="job_list_table" class="list_box_content_box container-fluid">
+                            <div class="row item p-1 no-gutters" data-roworder="1" data-prev="" data-jobcard="/0/tc/jobseeker/jobCard/?order=OE52ZU4xYkdKK2k1dWxEU1NWTWJmZWxCMGIzRm9lZEZmYlhtNjk1NDhFdz0%3D&amp;from=quickview&amp;for=gbayes">
+                                <div class="col-auto pr-1 text-center">
+                                    <span>1.</span>
+                                </div>
+                                <div class="col">
+                                    <div class="d-flex justify-content-between pb-2">
+                                        <div>資訊科技工程師</div>
+                                        <a class="d-inline-block clipItBtn text-decoration-none" href="#" data-ordno="21-26-0008159" data-clipped="false" onclick="f_clipJob(this); return false;">
+                                                <img src="/0/image/common/common/ies_job_but6_blank.svg" alt="" />
+                                        </a>
+                                    </div>
+                                    <div class="menu_icon icon_salary pb-2">$18,000 - $20,000 （月薪）</div>
+                                    <div class="menu_icon icon_address pb-2">深圳</div>
+                                </div>
+                                <div class="order_no d-none"><input type="hidden" value="21-26-0008159" id="ord_no_1" /></div>
+                            </div>
+                            <div class="row item p-1 no-gutters" data-roworder="2" data-prev="21-26-0008159" data-jobcard="/0/tc/jobseeker/jobCard/?order=dC9YQ2RJd1ZiR3lNU3MzZmNyMW9uZXdrbmg5UjJNM0hQcHd4UHduWGdaWT0%3D&amp;from=quickview&amp;for=gbayes">
+                                <div class="col-auto pr-1 text-center">
+                                    <span>2.</span>
+                                </div>
+                                <div class="col">
+                                    <div class="d-flex justify-content-between pb-2">
+                                        <div>行政秘書</div>
+                                        <a class="d-inline-block clipItBtn text-decoration-none" href="#" data-ordno="33-26-0010011" data-clipped="false" onclick="f_clipJob(this); return false;">
+                                                <img src="/0/image/common/common/ies_job_but6_blank.svg" alt="" />
+                                        </a>
+                                    </div>
+                                    <div class="menu_icon icon_salary pb-2">$18,000 （月薪）</div>
+                                    <div class="menu_icon icon_address pb-2">深圳</div>
+                                </div>
+                                <div class="order_no d-none"><input type="hidden" value="33-26-0010011" id="ord_no_2" /></div>
+                            </div>
+                            <div class="row item p-1 no-gutters" data-roworder="3" data-prev="33-26-0010011" data-jobcard="/0/tc/jobseeker/jobCard/?order=dC9YQ2RJd1ZiR3c1MzExMndSZFljKzdQUFd0WjhzOUNpeEFnK2hrZnhXND0%3D&amp;from=quickview&amp;for=gbayes">
+                                <div class="col-auto pr-1 text-center">
+                                    <span>3.</span>
+                                </div>
+                                <div class="col">
+                                    <div class="d-flex justify-content-between pb-2">
+                                        <div>行政助理</div>
+                                        <a class="d-inline-block clipItBtn text-decoration-none" href="#" data-ordno="33-26-0010007" data-clipped="false" onclick="f_clipJob(this); return false;">
+                                                <img src="/0/image/common/common/ies_job_but6_blank.svg" alt="" />
+                                        </a>
+                                    </div>
+                                    <div class="menu_icon icon_salary pb-2">$15,000 - $18,000 （月薪）</div>
+                                    <div class="menu_icon icon_address pb-2">深圳</div>
+                                </div>
+                                <div class="order_no d-none"><input type="hidden" value="33-26-0010007" id="ord_no_3" /></div>
+                            </div>
+                            <div class="row item p-1 no-gutters" data-roworder="4" data-prev="33-26-0010007" data-jobcard="/0/tc/jobseeker/jobCard/?order=RDlOSnVRa0x1d2JBc3BIaGxYUjdnWE9WbHJmamZEaExWUGZkQmlqd3lFdz0%3D&amp;from=quickview&amp;for=gbayes">
+                                <div class="col-auto pr-1 text-center">
+                                    <span>4.</span>
+                                </div>
+                                <div class="col">
+                                    <div class="d-flex justify-content-between pb-2">
+                                        <div>招聘專員</div>
+                                        <a class="d-inline-block clipItBtn text-decoration-none" href="#" data-ordno="23-26-0013933" data-clipped="false" onclick="f_clipJob(this); return false;">
+                                                <img src="/0/image/common/common/ies_job_but6_blank.svg" alt="" />
+                                        </a>
+                                    </div>
+                                    <div class="menu_icon icon_salary pb-2">$18,000 - $20,000 （月薪）</div>
+                                    <div class="menu_icon icon_address pb-2">深圳</div>
+                                </div>
+                                <div class="order_no d-none"><input type="hidden" value="23-26-0013933" id="ord_no_4" /></div>
+                            </div>
+                            <div class="row item p-1 no-gutters" data-roworder="5" data-prev="23-26-0013933" data-jobcard="/0/tc/jobseeker/jobCard/?order=TlpZMGdHM1NLaVZBTDk3d3hTcEFxWUF6T3Vtc1V2QzZSdW9kdkljWDdCZz0%3D&amp;from=quickview&amp;for=gbayes">
+                                <div class="col-auto pr-1 text-center">
+                                    <span>5.</span>
+                                </div>
+                                <div class="col">
+                                    <div class="d-flex justify-content-between pb-2">
+                                        <div>新媒體及市場推廣專員</div>
+                                        <a class="d-inline-block clipItBtn text-decoration-none" href="#" data-ordno="22-26-0016509" data-clipped="false" onclick="f_clipJob(this); return false;">
+                                                <img src="/0/image/common/common/ies_job_but6_blank.svg" alt="" />
+                                        </a>
+                                    </div>
+                                    <div class="menu_icon icon_salary pb-2">$18,000 - $25,000 （月薪）</div>
+                                    <div class="menu_icon icon_address pb-2">廣州</div>
+                                </div>
+                                <div class="order_no d-none"><input type="hidden" value="22-26-0016509" id="ord_no_5" /></div>
+                            </div>
+                            <div class="row item p-1 no-gutters" data-roworder="6" data-prev="22-26-0016509" data-jobcard="/0/tc/jobseeker/jobCard/?order=OE52ZU4xYkdKK2psV05yeDJCRFV2aG5ycTA4WFNGSWtSMTQwUTRHYW9wST0%3D&amp;from=quickview&amp;for=gbayes">
+                                <div class="col-auto pr-1 text-center">
+                                    <span>6.</span>
+                                </div>
+                                <div class="col">
+                                    <div class="d-flex justify-content-between pb-2">
+                                        <div>項目行政兼採購員</div>
+                                        <a class="d-inline-block clipItBtn text-decoration-none" href="#" data-ordno="21-26-0008109" data-clipped="false" onclick="f_clipJob(this); return false;">
+                                                <img src="/0/image/common/common/ies_job_but6_blank.svg" alt="" />
+                                        </a>
+                                    </div>
+                                    <div class="menu_icon icon_salary pb-2">$15,000 - $18,000 （月薪）</div>
+                                    <div class="menu_icon icon_address pb-2">廣州</div>
+                                </div>
+                                <div class="order_no d-none"><input type="hidden" value="21-26-0008109" id="ord_no_6" /></div>
+                            </div>
+                            <div class="row item p-1 no-gutters" data-roworder="7" data-prev="21-26-0008109" data-jobcard="/0/tc/jobseeker/jobCard/?order=Q2NPMlRPdU5GK2dLL0NhcHliOWorMEFtSzNhRFNRZ2N3b1FmYXdub2RYaz0%3D&amp;from=quickview&amp;for=gbayes">
+                                <div class="col-auto pr-1 text-center">
+                                    <span>7.</span>
+                                </div>
+                                <div class="col">
+                                    <div class="d-flex justify-content-between pb-2">
+                                        <div>HKDSE國際教育高中老師</div>
+                                        <a class="d-inline-block clipItBtn text-decoration-none" href="#" data-ordno="35-26-0014209" data-clipped="false" onclick="f_clipJob(this); return false;">
+                                                <img src="/0/image/common/common/ies_job_but6_blank.svg" alt="" />
+                                        </a>
+                                    </div>
+                                    <div class="menu_icon icon_salary pb-2">$18,000 - $30,000 （月薪）</div>
+                                    <div class="menu_icon icon_address pb-2">深圳</div>
+                                </div>
+                                <div class="order_no d-none"><input type="hidden" value="35-26-0014209" id="ord_no_7" /></div>
+                            </div>
+                            <div class="row item p-1 no-gutters" data-roworder="8" data-prev="35-26-0014209" data-jobcard="/0/tc/jobseeker/jobCard/?order=Q2NPMlRPdU5GK2d3TXUzTysvREl6QkdKWWN3RHRvd3RXRkc4L1QwSUg2TT0%3D&amp;from=quickview&amp;for=gbayes">
+                                <div class="col-auto pr-1 text-center">
+                                    <span>8.</span>
+                                </div>
+                                <div class="col">
+                                    <div class="d-flex justify-content-between pb-2">
+                                        <div>業務拓展經理 / 銷售經理</div>
+                                        <a class="d-inline-block clipItBtn text-decoration-none" href="#" data-ordno="35-26-0014049" data-clipped="false" onclick="f_clipJob(this); return false;">
+                                                <img src="/0/image/common/common/ies_job_but6_blank.svg" alt="" />
+                                        </a>
+                                    </div>
+                                    <div class="menu_icon icon_salary pb-2">$20,000 （月薪）</div>
+                                    <div class="menu_icon icon_address pb-2">佛山</div>
+                                </div>
+                                <div class="order_no d-none"><input type="hidden" value="35-26-0014049" id="ord_no_8" /></div>
+                            </div>
+                            <div class="row item p-1 no-gutters" data-roworder="9" data-prev="35-26-0014049" data-jobcard="/0/tc/jobseeker/jobCard/?order=Q2NPMlRPdU5GK2hKUVNjMHl3YkV2N3ZhUklKRzMweEJTYi9zeElzbnowVT0%3D&amp;from=quickview&amp;for=gbayes">
+                                <div class="col-auto pr-1 text-center">
+                                    <span>9.</span>
+                                </div>
+                                <div class="col">
+                                    <div class="d-flex justify-content-between pb-2">
+                                        <div>市場拓展及客戶服務員</div>
+                                        <a class="d-inline-block clipItBtn text-decoration-none" href="#" data-ordno="35-26-0013223" data-clipped="false" onclick="f_clipJob(this); return false;">
+                                                <img src="/0/image/common/common/ies_job_but6_blank.svg" alt="" />
+                                        </a>
+                                    </div>
+                                    <div class="menu_icon icon_salary pb-2">$18,000 - $20,000 （月薪）</div>
+                                    <div class="menu_icon icon_address pb-2">廣州</div>
+                                </div>
+                                <div class="order_no d-none"><input type="hidden" value="35-26-0013223" id="ord_no_9" /></div>
+                            </div>
+                            <div class="row item p-1 no-gutters" data-roworder="10" data-prev="35-26-0013223" data-jobcard="/0/tc/jobseeker/jobCard/?order=TlpZMGdHM1NLaVhYV2IzZXA5emJ4RW5wUGRjNlR5QjF0YWRLNnNXMk1IZz0%3D&amp;from=quickview&amp;for=gbayes">
+                                <div class="col-auto pr-1 text-center">
+                                    <span>10.</span>
+                                </div>
+                                <div class="col">
+                                    <div class="d-flex justify-content-between pb-2">
+                                        <div>商貿經理</div>
+                                        <a class="d-inline-block clipItBtn text-decoration-none" href="#" data-ordno="22-26-0016356" data-clipped="false" onclick="f_clipJob(this); return false;">
+                                                <img src="/0/image/common/common/ies_job_but6_blank.svg" alt="" />
+                                        </a>
+                                    </div>
+                                    <div class="menu_icon icon_salary pb-2">$20,000 （月薪）</div>
+                                    <div class="menu_icon icon_address pb-2">深圳</div>
+                                </div>
+                                <div class="order_no d-none"><input type="hidden" value="22-26-0016356" id="ord_no_10" /></div>
+                            </div>
+                            <div class="row item p-1 no-gutters" data-roworder="11" data-prev="22-26-0016356" data-jobcard="/0/tc/jobseeker/jobCard/?order=cFpPV3F5cWFuL3c4aWxlUjY2aGd1bGhyMEVWckFlclBwaFNPdGVXU0VLOD0%3D&amp;from=quickview&amp;for=gbayes">
+                                <div class="col-auto pr-1 text-center">
+                                    <span>11.</span>
+                                </div>
+                                <div class="col">
+                                    <div class="d-flex justify-content-between pb-2">
+                                        <div>AI基礎架構主任/高級主任</div>
+                                        <a class="d-inline-block clipItBtn text-decoration-none" href="#" data-ordno="11-26-0010247" data-clipped="false" onclick="f_clipJob(this); return false;">
+                                                <img src="/0/image/common/common/ies_job_but6_blank.svg" alt="" />
+                                        </a>
+                                    </div>
+                                    <div class="menu_icon icon_salary pb-2">$18,000 （月薪）</div>
+                                    <div class="menu_icon icon_address pb-2">深圳</div>
+                                </div>
+                                <div class="order_no d-none"><input type="hidden" value="11-26-0010247" id="ord_no_11" /></div>
+                            </div>
+                            <div class="row item p-1 no-gutters" data-roworder="12" data-prev="11-26-0010247" data-jobcard="/0/tc/jobseeker/jobCard/?order=RDlOSnVRa0x1d1pxRGp6TkU4a1YrTnM5SkNDWDFTWjduM1dqcGNVZVgxST0%3D&amp;from=quickview&amp;for=gbayes">
+                                <div class="col-auto pr-1 text-center">
+                                    <span>12.</span>
+                                </div>
+                                <div class="col">
+                                    <div class="d-flex justify-content-between pb-2">
+                                        <div>人力資源專員</div>
+                                        <a class="d-inline-block clipItBtn text-decoration-none" href="#" data-ordno="23-26-0013455" data-clipped="false" onclick="f_clipJob(this); return false;">
+                                                <img src="/0/image/common/common/ies_job_but6_blank.svg" alt="" />
+                                        </a>
+                                    </div>
+                                    <div class="menu_icon icon_salary pb-2">$18,000 - $20,000 （月薪）</div>
+                                    <div class="menu_icon icon_address pb-2">深圳</div>
+                                </div>
+                                <div class="order_no d-none"><input type="hidden" value="23-26-0013455" id="ord_no_12" /></div>
+                            </div>
+                            <div class="row item p-1 no-gutters" data-roworder="13" data-prev="23-26-0013455" data-jobcard="/0/tc/jobseeker/jobCard/?order=cFpPV3F5cWFuL3hreVVvbXl2OG5raFI5QS9oa0lOZ0NhVUVMR0FGWlJCMD0%3D&amp;from=quickview&amp;for=gbayes">
+                                <div class="col-auto pr-1 text-center">
+                                    <span>13.</span>
+                                </div>
+                                <div class="col">
+                                    <div class="d-flex justify-content-between pb-2">
+                                        <div>海外廣告設計師</div>
+                                        <a class="d-inline-block clipItBtn text-decoration-none" href="#" data-ordno="11-26-0010235" data-clipped="false" onclick="f_clipJob(this); return false;">
+                                                <img src="/0/image/common/common/ies_job_but6_blank.svg" alt="" />
+                                        </a>
+                                    </div>
+                                    <div class="menu_icon icon_salary pb-2">$18,000 - $25,000 （月薪）</div>
+                                    <div class="menu_icon icon_address pb-2">廣州</div>
+                                </div>
+                                <div class="order_no d-none"><input type="hidden" value="11-26-0010235" id="ord_no_13" /></div>
+                            </div>
+                            <div class="row item p-1 no-gutters" data-roworder="14" data-prev="11-26-0010235" data-jobcard="/0/tc/jobseeker/jobCard/?order=cFpPV3F5cWFuL3oxNG5LQkhuSFllaXVkWU9ZS1NVeTF3ZWh2RlZOek1zdz0%3D&amp;from=quickview&amp;for=gbayes">
+                                <div class="col-auto pr-1 text-center">
+                                    <span>14.</span>
+                                </div>
+                                <div class="col">
+                                    <div class="d-flex justify-content-between pb-2">
+                                        <div>海外廣告投放及商務專員</div>
+                                        <a class="d-inline-block clipItBtn text-decoration-none" href="#" data-ordno="11-26-0010233" data-clipped="false" onclick="f_clipJob(this); return false;">
+                                                <img src="/0/image/common/common/ies_job_but6_blank.svg" alt="" />
+                                        </a>
+                                    </div>
+                                    <div class="menu_icon icon_salary pb-2">$18,000 - $25,000 （月薪）</div>
+                                    <div class="menu_icon icon_address pb-2">廣州</div>
+                                </div>
+                                <div class="order_no d-none"><input type="hidden" value="11-26-0010233" id="ord_no_14" /></div>
+                            </div>
+                            <div class="row item p-1 no-gutters" data-roworder="15" data-prev="11-26-0010233" data-jobcard="/0/tc/jobseeker/jobCard/?order=cFpPV3F5cWFuL3dWcHJSaS80SGJSVklPZVZJaTJtV21XZEoxQkZXTGRtQT0%3D&amp;from=quickview&amp;for=gbayes">
+                                <div class="col-auto pr-1 text-center">
+                                    <span>15.</span>
+                                </div>
+                                <div class="col">
+                                    <div class="d-flex justify-content-between pb-2">
+                                        <div>初級財務分析師</div>
+                                        <a class="d-inline-block clipItBtn text-decoration-none" href="#" data-ordno="11-26-0010230" data-clipped="false" onclick="f_clipJob(this); return false;">
+                                                <img src="/0/image/common/common/ies_job_but6_blank.svg" alt="" />
+                                        </a>
+                                    </div>
+                                    <div class="menu_icon icon_salary pb-2">$18,000 - $25,000 （月薪）</div>
+                                    <div class="menu_icon icon_address pb-2">廣州</div>
+                                </div>
+                                <div class="order_no d-none"><input type="hidden" value="11-26-0010230" id="ord_no_15" /></div>
+                            </div>
+                            <div class="row item p-1 no-gutters" data-roworder="16" data-prev="11-26-0010230" data-jobcard="/0/tc/jobseeker/jobCard/?order=TlpZMGdHM1NLaVVVR3ZKdDRUNXRwL3NIdlJiSDA1SUh2THkwVmRxQTRMaz0%3D&amp;from=quickview&amp;for=gbayes">
+                                <div class="col-auto pr-1 text-center">
+                                    <span>16.</span>
+                                </div>
+                                <div class="col">
+                                    <div class="d-flex justify-content-between pb-2">
+                                        <div>人事行政專員</div>
+                                        <a class="d-inline-block clipItBtn text-decoration-none" href="#" data-ordno="22-26-0015964" data-clipped="false" onclick="f_clipJob(this); return false;">
+                                                <img src="/0/image/common/common/ies_job_but6_blank.svg" alt="" />
+                                        </a>
+                                    </div>
+                                    <div class="menu_icon icon_salary pb-2">$18,000 - $20,000 （月薪）</div>
+                                    <div class="menu_icon icon_address pb-2">深圳</div>
+                                </div>
+                                <div class="order_no d-none"><input type="hidden" value="22-26-0015964" id="ord_no_16" /></div>
+                            </div>
+                            <div class="row item p-1 no-gutters" data-roworder="17" data-prev="22-26-0015964" data-jobcard="/0/tc/jobseeker/jobCard/?order=TlpZMGdHM1NLaVc2T2ZRZ2hYVWlMaUJjUG5WVG15ZlN5Y09pNlZsdHMxcz0%3D&amp;from=quickview&amp;for=gbayes">
+                                <div class="col-auto pr-1 text-center">
+                                    <span>17.</span>
+                                </div>
+                                <div class="col">
+                                    <div class="d-flex justify-content-between pb-2">
+                                        <div>項目助理</div>
+                                        <a class="d-inline-block clipItBtn text-decoration-none" href="#" data-ordno="22-26-0015906" data-clipped="false" onclick="f_clipJob(this); return false;">
+                                                <img src="/0/image/common/common/ies_job_but6_blank.svg" alt="" />
+                                        </a>
+                                    </div>
+                                    <div class="menu_icon icon_salary pb-2">$18,000 - $25,000 （月薪）</div>
+                                    <div class="menu_icon icon_address pb-2">廣州</div>
+                                </div>
+                                <div class="order_no d-none"><input type="hidden" value="22-26-0015906" id="ord_no_17" /></div>
+                            </div>
+                            <div class="row item p-1 no-gutters" data-roworder="18" data-prev="22-26-0015906" data-jobcard="/0/tc/jobseeker/jobCard/?order=TlpZMGdHM1NLaVVLdTBMSnNSRS8rTzh1MzE2QkI5d0ZiMGhhdFh3NjQ0Yz0%3D&amp;from=quickview&amp;for=gbayes">
+                                <div class="col-auto pr-1 text-center">
+                                    <span>18.</span>
+                                </div>
+                                <div class="col">
+                                    <div class="d-flex justify-content-between pb-2">
+                                        <div>銷售與市場專員</div>
+                                        <a class="d-inline-block clipItBtn text-decoration-none" href="#" data-ordno="22-26-0015847" data-clipped="false" onclick="f_clipJob(this); return false;">
+                                                <img src="/0/image/common/common/ies_job_but6_blank.svg" alt="" />
+                                        </a>
+                                    </div>
+                                    <div class="menu_icon icon_salary pb-2">$18,000 - $20,000 （月薪）</div>
+                                    <div class="menu_icon icon_address pb-2">佛山</div>
+                                </div>
+                                <div class="order_no d-none"><input type="hidden" value="22-26-0015847" id="ord_no_18" /></div>
+                            </div>
+                            <div class="row item p-1 no-gutters" data-roworder="19" data-prev="22-26-0015847" data-jobcard="/0/tc/jobseeker/jobCard/?order=TlpZMGdHM1NLaVdKQk43MitFSFZQaXpLQjdpV0tzTWxMUmU5MW9GRWh3dz0%3D&amp;from=quickview&amp;for=gbayes">
+                                <div class="col-auto pr-1 text-center">
+                                    <span>19.</span>
+                                </div>
+                                <div class="col">
+                                    <div class="d-flex justify-content-between pb-2">
+                                        <div>社交媒體運營專員</div>
+                                        <a class="d-inline-block clipItBtn text-decoration-none" href="#" data-ordno="22-26-0015845" data-clipped="false" onclick="f_clipJob(this); return false;">
+                                                <img src="/0/image/common/common/ies_job_but6_blank.svg" alt="" />
+                                        </a>
+                                    </div>
+                                    <div class="menu_icon icon_salary pb-2">$18,000 - $20,000 （月薪）</div>
+                                    <div class="menu_icon icon_address pb-2">佛山</div>
+                                </div>
+                                <div class="order_no d-none"><input type="hidden" value="22-26-0015845" id="ord_no_19" /></div>
+                            </div>
+                            <div class="row item p-1 no-gutters" data-roworder="20" data-prev="22-26-0015845" data-jobcard="/0/tc/jobseeker/jobCard/?order=Q2NPMlRPdU5GK2cxUEE2dHV5WmxTUTJFQTVTZGk2MEVlSEZZOHVrWEM3ST0%3D&amp;from=quickview&amp;for=gbayes">
+                                <div class="col-auto pr-1 text-center">
+                                    <span>20.</span>
+                                </div>
+                                <div class="col">
+                                    <div class="d-flex justify-content-between pb-2">
+                                        <div>HKDSE國際教育英文高中老師</div>
+                                        <a class="d-inline-block clipItBtn text-decoration-none" href="#" data-ordno="35-26-0013428" data-clipped="false" onclick="f_clipJob(this); return false;">
+                                                <img src="/0/image/common/common/ies_job_but6_blank.svg" alt="" />
+                                        </a>
+                                    </div>
+                                    <div class="menu_icon icon_salary pb-2">$18,000 - $30,000 （月薪）</div>
+                                    <div class="menu_icon icon_address pb-2">東莞</div>
+                                </div>
+                                <div class="order_no d-none"><input type="hidden" value="35-26-0013428" id="ord_no_20" /></div>
+                            </div>
+                    </div>
+                </div>
+                <div class="container-fluid mt-3">
+                    <div class="row">
+                        <div class="col-auto input-group justify-content-center">
+                            <span class="mt-auto mb-auto mr-3">第</span>
+                            <a href="/0/tc/jobseeker/jobsearch/quickview/gbayes/?page=1" class="btn btn-outline-dark border-0 d-none" data-disable-change-link title=跳至第一頁><<</a>
+                            <a id="swapPrevPage" href="/0/tc/jobseeker/jobsearch/quickview/gbayes/?page=0" class="btn btn-outline-dark border-0 d-none" data-disable-change-link title=跳至上一頁><</a>
+<select class="form-control" id="GoToPage" name="Page" style="max-width: max-content;" title="選擇搜尋結果頁數"><option selected="selected" value="1">1</option>
+<option value="2">2</option>
+<option value="3">3</option>
+<option value="4">4</option>
+<option value="5">5</option>
+<option value="6">6</option>
+<option value="7">7</option>
+<option value="8">8</option>
+<option value="9">9</option>
+<option value="10">10</option>
+<option value="11">11</option>
+<option value="12">12</option>
+<option value="13">13</option>
+<option value="14">14</option>
+<option value="15">15</option>
+<option value="16">16</option>
+<option value="17">17</option>
+<option value="18">18</option>
+<option value="19">19</option>
+<option value="20">20</option>
+<option value="21">21</option>
+<option value="22">22</option>
+<option value="23">23</option>
+</select>                            <a id="swapNextPage" href="/0/tc/jobseeker/jobsearch/quickview/gbayes/?page=2" class="btn btn-outline-dark border-0 " data-disable-change-link title=跳至下一頁>></a>
+                            <a href="/0/tc/jobseeker/jobsearch/quickview/gbayes/?page=23" class="btn btn-outline-dark border-0 " data-disable-change-link title=跳至最後一頁>>></a>
+                            <span class="mt-auto mb-auto ml-3">頁</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col jobcardAreadiv p-0">
+                <div class="bg-white">
+                        <div id="pager" class="col-12 text-center pt-3 d-none d-md-block">
+                            <span class="mt-auto mb-auto">第</span>
+                            <a href="/0/tc/jobseeker/jobsearch/quickview/gbayes/?page=1" class="border-0 d-none" data-disable-change-link><<</a>
+                            <a href="/0/tc/jobseeker/jobsearch/quickview/gbayes/?page=0" class="border-0 d-none" data-disable-change-link><</a>
+                                <a href="/0/tc/jobseeker/jobsearch/quickview/gbayes/?page=1" class="current">1</a>
+                                <a href="/0/tc/jobseeker/jobsearch/quickview/gbayes/?page=2" class="">2</a>
+                                <a href="/0/tc/jobseeker/jobsearch/quickview/gbayes/?page=3" class="">3</a>
+                                <a href="/0/tc/jobseeker/jobsearch/quickview/gbayes/?page=4" class="">4</a>
+                                <a href="/0/tc/jobseeker/jobsearch/quickview/gbayes/?page=5" class="">5</a>
+                            <a href="/0/tc/jobseeker/jobsearch/quickview/gbayes/?page=2" class="border-0 " data-disable-change-link>></a>
+                            <a href="/0/tc/jobseeker/jobsearch/quickview/gbayes/?page=23" class="border-0 " data-disable-change-link>>></a>
+                            <span class="mt-auto mb-auto">頁</span>
+                        </div>
+                        <div id="jobCardDiv"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="modal fade" id="notice" tabindex="-1" role="dialog" aria-label="系統更新／維護通告" aria-hidden="true">
+    <div class="modal-dialog modal-lg" role="document">
+        <div class="modal-content">
+        </div>
+    </div>
+</div>
+
+
+    </div>
+    <footer class="container-fluid text-center" data-ies-base-tabindex="9000">
+        <div class="row">
+            <div class="footerLeft col-md-6 d-flex justify-content-center justify-content-md-start align-items-center">
+                <ul class="links">
+                    <li><a href="/0/tc/information/importantnotice/">重要告示</a></li>
+                    <li><a href="/0/tc/information/privacy/">私隱政策</a></li>
+                    <li><a href="/0/tc/information/sitemap/">網頁指南</a></li>
+                    <li><a href="/0/tc/information/contactus/">聯絡我們</a></li>
+                    <li><a href="/0/tc/information/faq/">常見問題</a></li>
+                </ul>
+
+            </div>
+            <div class="footerRight col-md-6">
+                <div class="gridBlock">
+                    <a rel="external" href="http://www.w3.org/WAI/WCAG2AA-Conformance" target="_blank">
+                        <img alt="遵守2A級無障礙圖示，萬維網聯盟（W3C）- 無障礙網頁倡議（WAI） Web Content Accessibility Guidelines 2.1（在新視窗開啟）" src="/0/Image/common/common/w3c_wcag2.1.png" aria-hidden="true" />
+                    </a>
+                </div>
+                <div class="gridBlock">
+                    <a rel="external" href="http://www.labour.gov.hk/front.htm" target="_blank">
+                        <img alt="勞工處（在新視窗開啟）" src="/0/Image/common/common/labour_icon.png" aria-hidden="true" />
+                    </a>
+                </div>
+                
+                <div class="gridBlock">
+                    <a rel="external" href="http://www.brandhk.gov.hk/" target="_blank">
+                        <img alt="香港品牌形象（在新視窗開啟）" src="/0/Image/common/common/brandhk.gif" aria-hidden="true" />
+                    </a>
+                </div>
+            </div>
+        </div>
+        <div>
+            <ul class="copyright">
+                <li>©2020勞工處 版權所有</li>
+                <li>覆檢日期： 2026年1月5日</li>
+            </ul>
+        </div>
+
+        <img class="back_top" src="/0/Image/common/common/top.png" alt="返回頁首" title="返回頁首" tabindex="-1" />
+
+    </footer>
+    <div id="main_modal" class="modal" tabindex="-1" role="dialog">
+        <div class="modal-dialog" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"></h5>
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                </div>
+                <div class="modal-body"></div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
