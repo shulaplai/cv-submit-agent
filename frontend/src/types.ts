@@ -40,6 +40,8 @@ export interface Job {
   applied_at: string | null;
   interview_stage: string;
   notes: string;
+  dup_key: string;
+  dup_count: number;
   created_at: string;
   updated_at: string;
   cover_letters: CoverLetter[];
@@ -59,9 +61,12 @@ export interface ScanStatus {
     new_jobs: number;
     skipped_duplicates: number;
     enriched: number;
+    backfilled: number;
     low_match: number;
     errors: string[];
   } | null;
+  last_backfill: { at: string; processed: number } | null;
+  progress: { platform: string; phase: string; count: number };
   last_error: string | null;
 }
 
@@ -72,6 +77,8 @@ export interface Stats {
   applied_last_7d: number;
   applied_last_30d: number;
   weekly_applied: { week: string; count: number }[];
+  weekly_goal: number;
+  applied_this_week: number;
 }
 
 export interface Profile {
@@ -82,7 +89,18 @@ export interface Profile {
   skills_json: string;
   gba_age_under_29: boolean;
   gba_edu_associate_degree: boolean;
+  llm_api_key: string;
+  llm_fallback_api_key: string;
+  auto_submit: boolean;
   updated_at: string;
+}
+
+export interface EmailPreview {
+  to: string;
+  contact_person: string;
+  subject: string;
+  body: string;
+  attachment: string;
 }
 
 export const STATUS_LABEL: Record<Status, string> = {

@@ -6,12 +6,15 @@
 
 ## 功能
 
-- 🕷️ **三個平台監控**：JobsDB（SEEK 登入 session 持久化）、OfferToday（infinite scroll）、jobs.gov.hk GBA 空缺（server-rendered，自動抽申請 email + 聯絡人）
-- ✍️ **Cover Letter 自動生成**：跟 JD 語言（英文 JD → 英文 CL；中文 JD → 繁中 CL），只可用 CV 事實（唔吹噓），UI 可編輯，每次儲存開新版本（歷史保留）
-- 🎯 **Match Score 過濾**：LLM 評分 0–100 + 理由；低分預設隱藏
-- 🖥️ **半自動申請**：agent 開定申請頁並預填（JobsDB / OfferToday），gov.hk 用 AppleScript 開 macOS Mail（收件人＝JD 聯絡 email、主旨、內文、CV 附件），你 check 完自己撳提交/發送——**agent 永遠唔會自動提交**
-- 📊 **Dashboard**：狀態看板、投遞歷史檔案庫（JD 快照 + CL 存檔）、統計圖表、面試進度追蹤
-- 📧 **外部申請網站**（Greenhouse/Workday/公司官網）：記錄 + 俾 link，唔自動化
+- 🕷️ **三個平台監控**：JobsDB（SEEK 登入 session 持久化）、OfferToday（infinite scroll）、jobs.gov.hk GBA 空缺（server-rendered，自動抽申請 email + 聯絡人）；**每 2 日夜晚 23:00 自動掃描**（`.env` 可改：`SCAN_HOUR` / `SCAN_DAY_INTERVAL`），起機唔會自動補掃
+- ✍️ **Cover Letter 自動生成**：跟 JD 語言（英文 JD → 英文 CL；中文 JD → 繁中 CL），只可用 CV 事實（唔吹噓），UI 可編輯，每次儲存開新版本（歷史保留）；生成後自動驗證語言/長度，唔啱會重試一次
+- 🎯 **Match Score 過濾**：LLM 評分 0–100 + 理由；低分預設隱藏；**每次掃描設 LLM 預算**（預設 30 份，慳 API 錢），未處理嘅用「補齊」按鈕處理
+- 🖥️ **自動投遞（預設開）**：撳「申請」會自己填 CL + 上傳/揀 CV 並**直接撳提交**；gov.hk 用 macOS Mail **自動發送 email**（用你自己 Mail account，唔使 SMTP）。完成會自動記錄「已投遞」。
+  - **安全閘**：驗證碼／登入牆／外部網站／缺 CL／缺 CV 一律唔會亂投，改為提示你手動完成；提交後會檢查確認頁，唔肯定就提醒你核實。
+  - 想逐份工手動：詳情頁「申請動作」可以切換「自動 / 手動（預填後等你撳）」；設定頁有總開關（`AUTO_SUBMIT` / 設定頁 checkbox）。
+- 📧 **外部申請網站**（Greenhouse/Workday/公司官網）：記錄 + 俾 link，唔自動化（避免亂填公司系統）
+- 📊 **Dashboard**：狀態看板（含跨平台「可能重複」標記）、**本週投遞進度條（X/15）**、投遞歷史檔案庫（JD 快照 + CL 存檔）、統計圖表、面試進度追蹤、**掃描實時進度**
+- ⚙️ **設定頁**：直接填 LLM key（覆蓋 .env）+ 一鍵測試連線、**由 CV 自動抽取技能清單**、CV 路徑、GBA 資格、**自動投遞開關**
 
 ## 快速開始
 
@@ -20,10 +23,11 @@
 ```
 
 1. 首次會裝 Python venv、Playwright Chromium、前端依賴。
-2. 將 `.env` 填好：`LLM_API_KEY`（DeepSeek）、`CV_EN_PATH` / `CV_ZH_PATH`（兩份 CV PDF 絕對路徑）。
-3. 開 http://127.0.0.1:8000 → 設定頁填姓名/email/技能清單。
-4. 撳「立即掃描」——第一次會開個瀏覽器視窗，喺入面登入 JobsDB / OfferToday 一次（之後 session 會記住）。
-5. 掃完喺職位台揀工 → 睇 JD + CL → 撳「開始申請」/「✉ Email 申請」→ 喺開咗嘅視窗/郵件 review 後提交 → 返嚟撳「✔ 記錄已投遞」。
+2. `run.sh` 會檢查 `.env` 未填嘅嘢（LLM key、CV 路徑）並警告；起機後自動開瀏覽器。
+3. `.env` 填好 `LLM_API_KEY`（DeepSeek）、`CV_EN_PATH` / `CV_ZH_PATH`；或者直接喺設定頁填（唔使改 .env 重啟）。
+4. 設定頁填姓名/email，撳「✦ 由 CV 自動抽取」填技能清單，再撳「測試連線」確認 LLM。
+5. 撳「立即掃描」——第一次會開個瀏覽器視窗，喺入面登入 JobsDB / OfferToday 一次（之後 session 會記住）。
+6. 掃完喺職位台揀工 → 睇 JD + CL → 撳「開始申請」/「✉ Email 申請」（先預覽）→ 喺開咗嘅視窗/郵件 review 後提交 → 返嚟撳「✔ 記錄已投遞」。
 
 ## 開發
 

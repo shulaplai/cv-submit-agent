@@ -192,6 +192,36 @@ a { color: inherit; }
 .stat.accent .n { color: var(--accent); }
 .stat.teal .n { color: var(--teal); }
 
+/* weekly goal progress bar */
+.goalbar {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(25, 22, 17, 0.12);
+  margin-top: 8px;
+  overflow: hidden;
+}
+.goalbar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.5s ease;
+}
+.goalbar-fill.done { background: var(--teal); }
+
+/* cross-platform duplicate badge */
+.dupbadge {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  color: #8a6a00;
+  border: 1px solid var(--gold);
+  border-radius: 4px;
+  padding: 2px 7px;
+  margin-left: 6px;
+  background: rgba(184, 134, 11, 0.1);
+  white-space: nowrap;
+}
+
 /* ---------------- filter bar ---------------- */
 .filterbar {
   display: flex;

@@ -123,10 +123,36 @@ def _apple_quote(text: str) -> str:
     return '"' + _apple_escape(text) + '"'
 
 
-async def open_email_compose(row: JobApplication, cl_text: str) -> dict:
-    """Top-level entry from apply_bot: compose + open Mail (or fallback)."""
-    cv_path = settings.CV_ZH_PATH or settings.CV_EN_PATH
+async def open_email_compose(row: JobApplication, cl_text: str, send: bool = False) -> dict:
+    """Top-level entry from apply_bot: compose + open Mail (or send it).
+
+    send=True -> create the message, attach CV and SEND immediately via Mail
+    (uses the user's own Mail account; no SMTP credentials needed).
+    send=False -> open a pre-filled draft for the user to review (semi-auto).
+    """
+    from .cv_loader import resolve_cv_path
+
+    cv_path = resolve_cv_path("zh") or resolve_cv_path("en")
     email = build_email(row, cl_text or "（請喺 UI 先生成/編輯 Cover Letter）", cv_path)
+
+    if send:
+        ok, note = send_email_via_mail(email)
+        if ok:
+            return {"ok": True, "kind": "email_sent", "to": email["to"], "message": note,
+                    "submitted": True,
+                    "preview": {"to": email["to"], "subject": email["subject"], "body": email["body"]}}
+        # sending failed -> fall back to opening a draft for review
+        ok2, note2 = compose_in_mail(email)
+        if ok2:
+            note2 += " " + (attach_cv_to_draft(cv_path)[1] if cv_path else "")
+            return {"ok": True, "kind": "email", "to": email["to"],
+                    "message": f"自動發送失敗（{note}），已改為開 draft 俾你手動發送。{note2}",
+                    "submitted": False,
+                    "preview": {"to": email["to"], "subject": email["subject"], "body": email["body"]}}
+        return {"ok": False, "kind": "email_failed", "to": email["to"],
+                "message": f"自動發送同開 Mail 都失敗：{note}；{note2}",
+                "submitted": False,
+                "preview": {"to": email["to"], "subject": email["subject"], "body": email["body"]}}
 
     ok, note = compose_in_mail(email)
     if ok:
@@ -135,9 +161,40 @@ async def open_email_compose(row: JobApplication, cl_text: str) -> dict:
             ok2, note2 = attach_cv_to_draft(cv_path)
             note += " " + note2
         return {"ok": True, "kind": "email", "to": email["to"], "message": note,
+                "submitted": False,
                 "preview": {"to": email["to"], "subject": email["subject"], "body": email["body"]}}
 
     # Mail unavailable -> fallback
     ok2, note2 = fallback_mailto(email)
     return {"ok": ok2, "kind": "email_fallback", "to": email["to"], "message": note2,
+            "submitted": False,
             "preview": {"to": email["to"], "subject": email["subject"], "body": email["body"]}}
+
+
+def send_email_via_mail(email: dict) -> tuple[bool, str]:
+    """Compose + attach CV + SEND via macOS Mail. Returns (ok, note)."""
+    if not email.get("to"):
+        return False, "呢份工冇聯絡 email，唔可以自動發送。"
+    subj = _apple_escape(email["subject"])
+    body = _apple_escape(email["body"])
+    to = _apple_escape(email["to"])
+    attach = ""
+    if email.get("attachment") and Path(email["attachment"]).exists():
+        attach = f'\tadd content file POSIX file "{_apple_escape(str(Path(email["attachment"]).resolve()))}"\n'
+    script = f"""
+tell application "Mail"
+	set newMsg to make new outgoing message with properties {{subject:"{subj}", content:"{body}"}}
+	tell newMsg
+		make new to recipient at end of to recipients with properties {{address:"{to}"}}
+{attach}\tend tell
+\tsend newMsg
+end tell
+"""
+    try:
+        r = subprocess.run(["osascript", "-e", script],
+                           capture_output=True, text=True, timeout=60)
+        if r.returncode == 0:
+            return True, "Email 已透過 macOS Mail 自動發送。"
+        return False, f"Mail 發送失敗: {r.stderr.strip()[:300]}"
+    except Exception as e:  # noqa: BLE001
+        return False, f"Mail 發送失敗: {e}"

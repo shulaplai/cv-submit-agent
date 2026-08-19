@@ -8,7 +8,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend"))
 
 _TMP = tempfile.mkdtemp(prefix="cvsubmit_test_")
 os.environ["DB_PATH"] = os.path.join(_TMP, "test.db")
-os.environ["SCAN_INTERVAL_HOURS"] = "0"
+os.environ["SCAN_DAY_INTERVAL"] = "0"  # no scheduler in tests
+os.environ["SCAN_HOUR"] = "23"
 os.environ["LLM_API_KEY"] = ""
 os.environ["LLM_FALLBACK_API_KEY"] = ""
 

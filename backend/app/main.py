@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.interval import IntervalTrigger
+from apscheduler.triggers.cron import CronTrigger
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -28,17 +28,19 @@ async def _scheduled_scan():
 async def lifespan(app: FastAPI):
     init_db()
     global _scheduler
-    if settings.SCAN_INTERVAL_HOURS > 0:
+    if settings.SCAN_DAY_INTERVAL > 0:
         _scheduler = AsyncIOScheduler()
         _scheduler.add_job(
             _scheduled_scan,
-            IntervalTrigger(hours=settings.SCAN_INTERVAL_HOURS),
+            CronTrigger(day=f"*/{settings.SCAN_DAY_INTERVAL}", hour=settings.SCAN_HOUR),
             id="scan_jobs",
             coalesce=True,
             max_instances=1,
         )
         _scheduler.start()
-        log.info("scheduled scan every %.1f h", settings.SCAN_INTERVAL_HOURS)
+        next_run = _scheduler.get_job("scan_jobs").next_run_time
+        log.info("scheduled scan: every %s days at %02d:00 (next: %s)",
+                 settings.SCAN_DAY_INTERVAL, settings.SCAN_HOUR, next_run)
     yield
     if _scheduler:
         _scheduler.shutdown(wait=False)

@@ -41,6 +41,8 @@ class JobApplicationOut(BaseModel):
     applied_at: Optional[datetime] = None
     interview_stage: str
     notes: str
+    dup_key: str = ""
+    dup_count: int = 0
     created_at: datetime
     updated_at: datetime
     cover_letters: list[CoverLetterOut] = []
@@ -50,6 +52,14 @@ class JobListOut(BaseModel):
     items: list[JobApplicationOut]
     total: int
     hidden_low_match: int
+
+
+class EmailPreview(BaseModel):
+    to: str
+    contact_person: str
+    subject: str
+    body: str
+    attachment: str
 
 
 class UpdateApplicationIn(BaseModel):
@@ -75,6 +85,9 @@ class ProfileIn(BaseModel):
     skills_json: Optional[str] = None
     gba_age_under_29: Optional[bool] = None
     gba_edu_associate_degree: Optional[bool] = None
+    llm_api_key: Optional[str] = None
+    llm_fallback_api_key: Optional[str] = None
+    auto_submit: Optional[bool] = None
 
 
 class ProfileOut(BaseModel):
@@ -87,6 +100,9 @@ class ProfileOut(BaseModel):
     skills_json: str
     gba_age_under_29: bool
     gba_edu_associate_degree: bool
+    llm_api_key: str
+    llm_fallback_api_key: str
+    auto_submit: bool
     updated_at: datetime
 
 
@@ -104,3 +120,5 @@ class StatsOut(BaseModel):
     applied_last_7d: int
     applied_last_30d: int
     weekly_applied: list[dict]  # [{week: str, count: int}]
+    weekly_goal: int
+    applied_this_week: int

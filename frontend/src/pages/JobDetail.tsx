@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { Modal, PlatformBadge, StatusChip, fmtDate } from "../components";
-import type { Job } from "../types";
+import type { EmailPreview, Job } from "../types";
 
 interface ApplyResult {
   ok: boolean;
   kind: string;
+  submitted?: boolean;
   url?: string;
   to?: string;
   message: string;
@@ -29,6 +30,7 @@ export function JobDetail({
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<{ text: string; kind: string } | null>(null);
   const [applyResult, setApplyResult] = useState<ApplyResult | null>(null);
+  const [emailDraft, setEmailDraft] = useState<EmailPreview | null>(null);
   const [notes, setNotes] = useState(job.notes);
   const [stage, setStage] = useState(job.interview_stage);
 
@@ -107,14 +109,58 @@ export function JobDetail({
     }
   };
 
-  const startApply = async () => {
+  const [autoMode, setAutoMode] = useState<boolean | null>(null); // null = follow profile
+
+  useEffect(() => {
+    api.profile().then((p) => {
+      if (autoMode === null) setAutoMode(p.auto_submit);
+    }).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const effectiveAuto = autoMode ?? true;
+
+  const startApply = async (auto: boolean) => {
     setBusy(true);
     try {
-      const r = await api.apply(job.id);
+      const r = await api.apply(job.id, auto);
       setApplyResult(r as ApplyResult);
-      showNote(r.message, r.ok ? "ok" : "err");
+      showNote(r.message, r.ok ? (r.submitted ? "ok" : "info") : "err");
+      if (r.submitted) {
+        await refresh(job.id);
+      }
     } catch (e) {
-      showNote(`開申請失敗: ${(e as Error).message}`, "err");
+      showNote(`申請失敗: ${(e as Error).message}`, "err");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // email flow: step 1 = preview, step 2 = confirm -> open Mail / auto-send
+  const startEmailApply = async () => {
+    setBusy(true);
+    try {
+      const draft = await api.emailPreview(job.id);
+      setEmailDraft(draft);
+    } catch (e) {
+      showNote(`預覽失敗: ${(e as Error).message}`, "err");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const confirmEmailApply = async () => {
+    setBusy(true);
+    try {
+      const r = await api.apply(job.id, effectiveAuto);
+      setApplyResult(r as ApplyResult);
+      setEmailDraft(null);
+      showNote(r.message, r.ok ? (r.submitted ? "ok" : "info") : "err");
+      if (r.submitted) {
+        await refresh(job.id);
+      }
+    } catch (e) {
+      showNote(`開 Mail 失敗: ${(e as Error).message}`, "err");
     } finally {
       setBusy(false);
     }
@@ -153,8 +199,12 @@ export function JobDetail({
       : job.apply_method === "external_link"
         ? "↗ 外部申請 link"
         : job.platform === "offertoday"
-          ? "✎ 傳送投遞消息"
-          : "▶ 開始申請";
+          ? effectiveAuto
+            ? "▶ 自動投遞（填訊息 + CV）"
+            : "✎ 傳送投遞消息（預填）"
+          : effectiveAuto
+            ? "▶ 自動投遞（填 CL + CV）"
+            : "▶ 開始申請（預填）";
 
   return (
     <Modal onClose={onClose}>
@@ -245,13 +295,39 @@ export function JobDetail({
 
       <div className="section">
         <h4>申請動作</h4>
+        {job.apply_method !== "external_link" && (
+          <div className="note-inline" style={{ borderStyle: "solid", marginBottom: 12, padding: "8px 12px" }}>
+            模式：{" "}
+            <button
+              className={`chip-btn ${effectiveAuto ? "active" : ""}`}
+              onClick={() => setAutoMode(true)}
+            >
+              自動（自己填 + 提交/發送）
+            </button>{" "}
+            <button
+              className={`chip-btn ${!effectiveAuto ? "active" : ""}`}
+              onClick={() => setAutoMode(false)}
+            >
+              手動（預填後等你撳）
+            </button>
+            {effectiveAuto && (
+              <span style={{ color: "var(--accent-deep)", fontSize: 12 }}>
+                ⚠ 撳咗會直接提交，唔會停低確認
+              </span>
+            )}
+          </div>
+        )}
         <div className="btnrow">
           {job.apply_method === "external_link" ? (
             <a className="btn primary" href={job.external_url || job.url} target="_blank" rel="noreferrer">
               {applyBtnLabel}
             </a>
+          ) : job.apply_method === "email" ? (
+            <button className="btn primary" onClick={startEmailApply} disabled={busy}>
+              {applyBtnLabel}
+            </button>
           ) : (
-            <button className="btn primary" onClick={startApply} disabled={busy}>
+            <button className="btn primary" onClick={() => startApply(effectiveAuto)} disabled={busy}>
               {applyBtnLabel}
             </button>
           )}
@@ -259,6 +335,35 @@ export function JobDetail({
             ✔ 記錄已投遞
           </button>
         </div>
+        {emailDraft && (
+          <div className="note-inline" style={{ borderStyle: "solid" }}>
+            <div style={{ fontWeight: 600, marginBottom: 6 }}>
+              Email 預覽 — {effectiveAuto ? "確認後會自動發送" : "確認後會開 Mail draft 俾你手動發送"}
+            </div>
+            <div style={{ whiteSpace: "pre-wrap", fontSize: 12.5 }}>
+              <b>收件人：</b>
+              {emailDraft.to}
+              {emailDraft.contact_person && `（${emailDraft.contact_person}）`}
+              <br />
+              <b>主旨：</b>
+              {emailDraft.subject}
+              <br />
+              <b>附件：</b>
+              {emailDraft.attachment || "（未設定 CV 路徑）"}
+              <br />
+              <b>內文：</b>
+              {emailDraft.body}
+            </div>
+            <div className="btnrow" style={{ marginTop: 10 }}>
+              <button className="btn primary" onClick={confirmEmailApply} disabled={busy}>
+                {effectiveAuto ? "確認並自動發送" : "確認並開 Mail（手動發送）"}
+              </button>
+              <button className="btn" onClick={() => setEmailDraft(null)} disabled={busy}>
+                取消
+              </button>
+            </div>
+          </div>
+        )}
         {applyResult && (
           <div className={`note-inline ${applyResult.ok ? "ok" : "err"}`}>
             {applyResult.message}

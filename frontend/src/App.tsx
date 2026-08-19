@@ -80,13 +80,27 @@ export default function App() {
         <div className="scan-box">
           <div className="scan-status">
             {scan?.running ? (
-              <>▣ 掃描進行中…</>
+              <>
+                ▣ 掃描進行中
+                {scan.progress?.platform && (
+                  <>
+                    <br />
+                    正在掃 {scan.progress.platform}…（{scan.progress.phase}）
+                  </>
+                )}
+              </>
             ) : scan?.last ? (
               <>
                 上次掃描 <b>{fmtDate(scan.last.at)}</b>
                 <br />
                 新職位 <b>{scan.last.new_jobs}</b> · 重複 {scan.last.skipped_duplicates} · 掃到{" "}
                 {scan.last.scanned}
+                {scan.last.backfilled > 0 && (
+                  <>
+                    <br />
+                    補齊 {scan.last.backfilled} 份
+                  </>
+                )}
                 {scan.last.errors.length > 0 && (
                   <>
                     <br />

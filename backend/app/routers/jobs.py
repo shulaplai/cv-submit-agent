@@ -1,16 +1,17 @@
 """Job application endpoints: list, detail, enrich, CL versions, apply actions."""
-import asyncio
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import or_
+from pydantic import BaseModel
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, selectinload
 
 from ..config import settings
 from ..db import get_db
-from ..models import CoverLetter, JobApplication
+from ..models import CoverLetter, JobApplication, Profile, utcnow
 from ..schemas import (
     CoverLetterEditIn,
+    EmailPreview,
     JobApplicationOut,
     JobListOut,
     RegenerateCLLIn,
@@ -18,11 +19,13 @@ from ..schemas import (
 )
 from ..services import scraper_jobsdb, scraper_offertoday
 from ..services.apply_bot import open_apply
-from ..services.cl_generator import generate_cl
+from ..services.cl_generator import generate_cl_checked
 from ..services.cv_loader import get_cv_text, load_skills
+from ..services.email_bot import build_email
 from ..services.language import detect_language
 from ..services.llm import LLMError
 from ..services.matcher import score_job
+from ..services.scanner import make_dup_key
 from ..services.scraper_base import get_browser
 from ..services.store import mark_applied
 
@@ -40,6 +43,23 @@ def _load(db: Session, job_id: int) -> JobApplication:
     if row is None:
         raise HTTPException(status_code=404, detail="job not found")
     return row
+
+
+def _attach_dup_counts(db: Session, rows: list[JobApplication]) -> None:
+    """Set dup_count = number of OTHER rows sharing the same dup_key."""
+    keys = {r.dup_key for r in rows if r.dup_key}
+    if not keys:
+        for r in rows:
+            r.dup_count = 0
+        return
+    counts = dict(
+        db.query(JobApplication.dup_key, func.count())
+        .filter(JobApplication.dup_key.in_(keys))
+        .group_by(JobApplication.dup_key)
+        .all()
+    )
+    for r in rows:
+        r.dup_count = max(0, (counts.get(r.dup_key, 0) - 1)) if r.dup_key else 0
 
 
 @router.get("", response_model=JobListOut)
@@ -62,6 +82,7 @@ def list_jobs(status: str | None = None, platform: str | None = None, q: str = "
     rows = (query.order_by(JobApplication.created_at.desc())
             .offset(offset).limit(limit)
             .options(selectinload(JobApplication.cover_letters)).all())
+    _attach_dup_counts(db, rows)
     return JobListOut(items=rows, total=total, hidden_low_match=hidden)
 
 
@@ -109,17 +130,22 @@ async def refresh_job(job_id: int, db: Session = Depends(get_db)):
     score, reason = await score_job(job_dict, load_skills())
     row.match_score = score
     row.match_reason = reason
+    if row.company and row.title:
+        row.dup_key = make_dup_key(row.company, row.title)
     row.status = "pending_review" if score >= settings.MATCH_THRESHOLD else "low_match"
 
-    try:
-        cv_text = get_cv_text(row.jd_language)
-        content = await generate_cl(cv_text, row.jd_text or row.title, job_dict, row.jd_language)
-        latest = (db.query(CoverLetter).filter_by(application_id=row.id)
-                  .order_by(CoverLetter.version.desc()).first())
-        db.add(CoverLetter(application_id=row.id, language=row.jd_language,
-                           content=content, version=(latest.version + 1 if latest else 1)))
-    except LLMError as e:
-        log.warning("CL gen failed on refresh: %s", e)
+    if score >= settings.MATCH_THRESHOLD:
+        try:
+            cv_text = get_cv_text(row.jd_language)
+            content, _warning = await generate_cl_checked(
+                cv_text, row.jd_text or row.title, job_dict, row.jd_language
+            )
+            latest = (db.query(CoverLetter).filter_by(application_id=row.id)
+                      .order_by(CoverLetter.version.desc()).first())
+            db.add(CoverLetter(application_id=row.id, language=row.jd_language,
+                               content=content, version=(latest.version + 1 if latest else 1)))
+        except LLMError as e:
+            log.warning("CL gen failed on refresh: %s", e)
 
     db.commit()
     db.refresh(row)
@@ -149,8 +175,10 @@ async def regenerate_cl(job_id: int, payload: RegenerateCLLIn, db: Session = Dep
                 "salary_range": row.salary_range, "jd_text": row.jd_text, "short_desc": ""}
     try:
         cv_text = get_cv_text(row.jd_language)
-        content = await generate_cl(cv_text, row.jd_text, job_dict, row.jd_language,
-                                    instructions=payload.instructions)
+        content, _warning = await generate_cl_checked(
+            cv_text, row.jd_text, job_dict, row.jd_language,
+            instructions=payload.instructions,
+        )
         latest = (db.query(CoverLetter).filter_by(application_id=row.id)
                   .order_by(CoverLetter.version.desc()).first())
         db.add(CoverLetter(application_id=row.id, language=row.jd_language,
@@ -162,14 +190,53 @@ async def regenerate_cl(job_id: int, payload: RegenerateCLLIn, db: Session = Dep
     return row
 
 
+@router.get("/{job_id}/email-preview", response_model=EmailPreview)
+def email_preview(job_id: int, db: Session = Depends(get_db)):
+    """Preview the composed application email WITHOUT opening Mail."""
+    row = _load(db, job_id)
+    if not row.contact_email:
+        raise HTTPException(status_code=400, detail="呢份工冇聯絡 email，唔可以用 email 申請")
+    latest = (db.query(CoverLetter).filter_by(application_id=row.id)
+              .order_by(CoverLetter.version.desc()).first())
+    from ..services.cv_loader import resolve_cv_path
+    cv_path = resolve_cv_path("zh") or resolve_cv_path("en")
+    email = build_email(row, (latest.content if latest else ""), cv_path)
+    return EmailPreview(
+        to=email["to"], contact_person=row.contact_person,
+        subject=email["subject"], body=email["body"], attachment=email["attachment"],
+    )
+
+
+class ApplyIn(BaseModel):
+    """auto=None -> follow profile/settings; True -> auto-submit; False -> manual review."""
+    auto: bool | None = None
+
+
 @router.post("/{job_id}/apply")
-async def start_apply(job_id: int, db: Session = Depends(get_db)):
-    """Open the semi-auto application flow (browser or Mail). Never submits."""
+async def start_apply(job_id: int, payload: ApplyIn | None = None, db: Session = Depends(get_db)):
+    """Run the application flow (browser or Mail).
+
+    Auto-submits when auto=True (profile default when unset): fills the form +
+    CV, clicks submit / sends the email, and marks the job applied on success.
+    Never submits external-link jobs; aborts on login walls / missing CL / CV.
+    """
     row = _load(db, job_id)
     latest = (db.query(CoverLetter).filter_by(application_id=row.id)
               .order_by(CoverLetter.version.desc()).first())
     cl_text = latest.content if latest else ""
-    return await open_apply(row, cl_text)
+
+    profile = db.get(Profile, 1)
+    auto = payload.auto if (payload and payload.auto is not None) else (
+        profile.auto_submit if profile else settings.AUTO_SUBMIT
+    )
+
+    result = await open_apply(row, cl_text, auto=auto)
+    if result.get("submitted"):
+        row.status = "applied"
+        row.applied_at = row.applied_at or utcnow()
+        db.commit()
+        result["job_id"] = row.id
+    return result
 
 
 @router.post("/{job_id}/mark-applied", response_model=JobApplicationOut)

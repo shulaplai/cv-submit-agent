@@ -30,8 +30,19 @@ class Settings(BaseSettings):
     # --- Job targeting ---
     JOB_KEYWORDS: str = "AI Engineer,agent developer,AI developer,developer,programmer,frontend developer,資訊科技工程師,AI 工程師,AI基礎架構"
     MATCH_THRESHOLD: int = 50  # 0-100; below -> low_match (hidden by default)
-    SCAN_INTERVAL_HOURS: float = 6.0
+    # Scheduled scan: every SCAN_DAY_INTERVAL days at SCAN_HOUR (0 disables)
+    SCAN_HOUR: int = 23
+    SCAN_DAY_INTERVAL: int = 2
+    # LLM budget per scan: only the top-N (by keyword pre-score) new jobs get
+    # full LLM match + CL; the rest are left for backfill / manual refresh.
+    MAX_ENRICH_PER_SCAN: int = 30
+    GOAL_APPLICATIONS_PER_WEEK: int = 15
     GOVHK_ENABLED: bool = True
+
+    # --- Application behavior ---
+    # True = agent fills the form AND clicks submit / sends the email itself.
+    # The UI (settings) and per-job manual mode can override this.
+    AUTO_SUBMIT: bool = True
 
     # --- GBA scheme eligibility (jobs.gov.hk GBA vacancies) ---
     GBA_AGE_UNDER_29: bool = True

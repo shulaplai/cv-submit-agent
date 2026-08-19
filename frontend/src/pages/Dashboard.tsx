@@ -16,11 +16,13 @@ export function Dashboard({
   const [platform, setPlatform] = useState("");
   const [q, setQ] = useState("");
   const [showAll, setShowAll] = useState(false);
-  const [stats, setStats] = useState<{ applied7: number; applied30: number; total: number }>({
-    applied7: 0,
-    applied30: 0,
-    total: 0,
-  });
+  const [stats, setStats] = useState<{
+    applied7: number;
+    applied30: number;
+    total: number;
+    weeklyGoal: number;
+    appliedThisWeek: number;
+  }>({ applied7: 0, applied30: 0, total: 0, weeklyGoal: 15, appliedThisWeek: 0 });
   const [selected, setSelected] = useState<Job | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -35,6 +37,8 @@ export function Dashboard({
         applied7: s.applied_last_7d,
         applied30: s.applied_last_30d,
         total: s.total,
+        weeklyGoal: s.weekly_goal,
+        appliedThisWeek: s.applied_this_week,
       });
     } catch (e) {
       pushToast(`載入失敗: ${(e as Error).message}`, "err");
@@ -46,6 +50,16 @@ export function Dashboard({
   useEffect(() => {
     load();
   }, [load]);
+
+  const doBackfill = async () => {
+    try {
+      const r = await api.backfill();
+      pushToast(r.message || "補齊已開始", "info");
+      setTimeout(load, 3000);
+    } catch (e) {
+      pushToast(`補齊失敗: ${(e as Error).message}`, "err");
+    }
+  };
 
   const openDetail = async (job: Job) => {
     try {
@@ -82,9 +96,17 @@ export function Dashboard({
         </div>
         <div className="stat">
           <div className="n">
-            {data.total} <small>份</small>
+            {stats.appliedThisWeek} <small>/ {stats.weeklyGoal}</small>
           </div>
-          <div className="l">顯示中</div>
+          <div className="l">
+            本週目標
+            <div className="goalbar">
+              <div
+                className={`goalbar-fill ${stats.appliedThisWeek >= stats.weeklyGoal ? "done" : ""}`}
+                style={{ width: `${Math.min(100, (stats.appliedThisWeek / stats.weeklyGoal) * 100)}%` }}
+              />
+            </div>
+          </div>
         </div>
       </div>
 
@@ -123,6 +145,9 @@ export function Dashboard({
           />
           顯示低匹配（{data.hidden_low_match}）
         </label>
+        <button className="btn" onClick={doBackfill} title="為最舊嘅未處理職位補上 JD / CL">
+          ⇪ 補齊
+        </button>
       </div>
 
       {loading ? (
@@ -144,6 +169,11 @@ export function Dashboard({
                 <div className="top">
                   <div>
                     <PlatformBadge platform={job.platform} />
+                    {job.dup_count > 0 && (
+                      <span className="dupbadge" title="同一職位喺其他平台都有出現">
+                        ⚠ 可能重複 ×{job.dup_count}
+                      </span>
+                    )}
                     <h3 style={{ marginTop: 6 }}>{job.title}</h3>
                     <div className="company">{job.company || "—"}</div>
                   </div>

@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from ..config import settings
 from ..db import get_db
 from ..models import JobApplication
 from ..schemas import StatsOut
@@ -49,6 +50,18 @@ def stats(db: Session = Depends(get_db)):
         )
         weekly.append({"week": week_start.strftime("%m-%d"), "count": count})
 
+    # applications in the current ISO week (goal tracking)
+    days_since_monday = now.weekday()
+    iso_week_start = (now - timedelta(days=days_since_monday)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    applied_this_week = (
+        db.query(func.count())
+        .filter(JobApplication.applied_at >= iso_week_start)
+        .scalar()
+        or 0
+    )
+
     return StatsOut(
         total=sum(by_status.values()),
         by_status=by_status,
@@ -56,4 +69,6 @@ def stats(db: Session = Depends(get_db)):
         applied_last_7d=applied_7d,
         applied_last_30d=applied_30d,
         weekly_applied=weekly,
+        weekly_goal=settings.GOAL_APPLICATIONS_PER_WEEK,
+        applied_this_week=applied_this_week,
     )

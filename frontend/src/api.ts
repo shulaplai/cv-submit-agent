@@ -1,10 +1,11 @@
-import type { Job, JobList, Profile, ScanStatus, Stats } from "./types";
+import type { EmailPreview, Job, JobList, Profile, ScanStatus, Stats } from "./types";
 
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, {
-    headers: { "Content-Type": "application/json" },
-    ...init,
-  });
+  const headers: Record<string, string> = {};
+  if (!(init?.body instanceof FormData)) {
+    headers["Content-Type"] = "application/json";
+  }
+  const res = await fetch(url, { ...init, headers });
   if (!res.ok) {
     let detail = res.statusText;
     try {
@@ -38,18 +39,31 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ instructions }),
     }),
-  apply: (id: number) =>
-    req<{ ok: boolean; kind: string; url?: string; to?: string; message: string; preview?: unknown }>(
+  apply: (id: number, auto?: boolean) =>
+    req<{ ok: boolean; kind: string; submitted?: boolean; url?: string; to?: string; message: string; preview?: unknown }>(
       `/api/jobs/${id}/apply`,
-      { method: "POST" }
+      { method: "POST", body: JSON.stringify({ auto }) }
     ),
   markApplied: (id: number) => req<Job>(`/api/jobs/${id}/mark-applied`, { method: "POST" }),
   updateJob: (id: number, patch: Record<string, unknown>) =>
     req<Job>(`/api/jobs/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   scanStatus: () => req<ScanStatus>("/api/scan/status"),
   startScan: () => req<{ started: boolean; message: string }>("/api/scan", { method: "POST" }),
+  backfill: () => req<{ started: boolean; message: string }>("/api/scan/backfill", { method: "POST" }),
   stats: () => req<Stats>("/api/stats"),
   profile: () => req<Profile>("/api/profile"),
   saveProfile: (p: Record<string, unknown>) =>
     req<Profile>("/api/profile", { method: "PUT", body: JSON.stringify(p) }),
+  testLLM: () => req<{ ok: boolean; latency_ms: number; model: string; error: string }>(
+    "/api/profile/test-llm",
+    { method: "POST" }
+  ),
+  extractSkills: () => req<{ skills: string[] }>("/api/profile/extract-skills", { method: "POST" }),
+  emailPreview: (id: number) => req<EmailPreview>(`/api/jobs/${id}/email-preview`),
+  uploadCV: (kind: "en" | "zh", file: File) => {
+    const fd = new FormData();
+    fd.append("kind", kind);
+    fd.append("file", file);
+    return req<Profile>("/api/profile/cv", { method: "POST", body: fd });
+  },
 };

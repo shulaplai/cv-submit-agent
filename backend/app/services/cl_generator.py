@@ -60,3 +60,58 @@ async def generate_cl(cv_text: str, jd: str, job: dict, language: str,
         return (await llm_svc.chat(messages, temperature=0.6)).strip()
     except LLMError:
         raise
+
+
+# ------------------------------------------------------------------ quality
+
+def _cjk_ratio(text: str) -> float:
+    import re
+
+    cjk = len(re.findall(r"[\u4e00-\u9fff]", text))
+    letters = len(re.findall(r"[A-Za-z\u4e00-\u9fff]", text))
+    return cjk / letters if letters else (1.0 if cjk else 0.0)
+
+
+def validate_cl(content: str, language: str) -> list[str]:
+    """Return a list of quality problems (empty = OK)."""
+    import re
+
+    problems: list[str] = []
+    if language == "zh":
+        if _cjk_ratio(content) < 0.3:
+            problems.append("語言唔啱：應該係繁體中文")
+        chars = len(re.findall(r"[\u4e00-\u9fff]", content))
+        if chars < 150:
+            problems.append(f"太短（約 {chars} 個中文字）")
+        elif chars > 900:
+            problems.append(f"太長（約 {chars} 個中文字）")
+    else:
+        if _cjk_ratio(content) > 0.4:
+            problems.append("語言唔啱：應該係英文")
+        words = len(content.split())
+        if words < 100:
+            problems.append(f"太短（{words} 字）")
+        elif words > 600:
+            problems.append(f"太長（{words} 字）")
+    return problems
+
+
+async def generate_cl_checked(cv_text: str, jd: str, job: dict, language: str,
+                              instructions: str = "") -> tuple[str, str]:
+    """Generate + validate; retries once with a corrective hint on failure.
+
+    Returns (content, warning). Warning is empty on success.
+    """
+    content = await generate_cl(cv_text, jd, job, language, instructions)
+    problems = validate_cl(content, language)
+    if not problems:
+        return content, ""
+    # one corrective retry
+    hint = "；".join(problems)
+    retry_instr = f"（上次版本問題：{hint}。請修正後重新輸出完整求職信。）"
+    retry = await generate_cl(cv_text, jd, job, language,
+                              f"{instructions} {retry_instr}".strip())
+    problems2 = validate_cl(retry, language)
+    if not problems2 or len(retry) >= len(content):
+        return retry, ("" if not problems2 else f"CL 質素提示：{'；'.join(problems2)}")
+    return content, f"CL 質素提示：{'；'.join(problems)}"

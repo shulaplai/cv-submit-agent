@@ -25,6 +25,11 @@ class Profile(Base):
     skills_json: Mapped[str] = mapped_column(Text, default="[]")  # list[str]
     gba_age_under_29: Mapped[bool] = mapped_column(default=True)
     gba_edu_associate_degree: Mapped[bool] = mapped_column(default=True)
+    # Optional LLM keys configured in the UI (override .env when set)
+    llm_api_key: Mapped[str] = mapped_column(String(300), default="")
+    llm_fallback_api_key: Mapped[str] = mapped_column(String(300), default="")
+    # True = auto-submit applications (fill + click submit / send email)
+    auto_submit: Mapped[bool] = mapped_column(default=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
@@ -57,6 +62,7 @@ class JobApplication(Base):
     applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     interview_stage: Mapped[str] = mapped_column(String(100), default="")
     notes: Mapped[str] = mapped_column(Text, default="")
+    dup_key: Mapped[str] = mapped_column(String(300), default="", index=True)  # cross-platform dup (company+title normalized)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 

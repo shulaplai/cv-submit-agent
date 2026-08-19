@@ -1,11 +1,13 @@
 """Profile (onboarding) endpoints — single row id=1."""
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..db import get_db
 from ..models import Profile
 from ..schemas import ProfileIn, ProfileOut
+from ..services import llm as llm_svc
+from ..services.cv_loader import CVError, get_cv_text
 
 router = APIRouter(prefix="/api/profile", tags=["profile"])
 
@@ -37,3 +39,64 @@ def update_profile(payload: ProfileIn, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(profile)
     return profile
+
+
+@router.post("/cv", response_model=ProfileOut)
+async def upload_cv(kind: str = Form(...), file: UploadFile = File(...),
+                    db: Session = Depends(get_db)):
+    """Pick a CV via the browser file dialog: store it under data/cvs/ and set
+    the profile path — the user never types a path manually."""
+    if kind not in ("en", "zh"):
+        raise HTTPException(status_code=400, detail="kind 必須係 en 或 zh")
+    if not (file.filename or "").lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="暫時只支援 PDF（pypdf 讀取）")
+    cvs_dir = settings.DATA_DIR / "cvs"
+    cvs_dir.mkdir(parents=True, exist_ok=True)
+    dest = cvs_dir / f"cv_{kind}.pdf"
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="空檔案")
+    dest.write_bytes(content)
+
+    profile = db.get(Profile, 1)
+    if profile is None:
+        profile = Profile(id=1)
+        db.add(profile)
+    setattr(profile, f"cv_{kind}_path", str(dest))
+    db.commit()
+    db.refresh(profile)
+    return profile
+
+
+@router.post("/test-llm")
+async def test_llm():
+    """Ping the configured LLM (DB key overrides .env). Returns {ok, latency_ms, model, error}."""
+    return await llm_svc.test_connection()
+
+
+@router.post("/extract-skills")
+async def extract_skills():
+    """Ask the LLM to extract a skills list from the English CV (facts only)."""
+    try:
+        cv_text = get_cv_text("en")
+    except CVError as e:
+        raise HTTPException(status_code=400, detail=f"讀唔到 CV：{e}")
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "從求職者履歷中抽取技能清單。只可以用履歷出現過嘅技能，"
+                "唔好加冇出現嘅。輸出嚴格 JSON：{\"skills\": [\"Skill A\", \"Skill B\"]}，最多 20 項，"
+                "用英文輸出技能名。"
+            ),
+        },
+        {"role": "user", "content": cv_text[:5000]},
+    ]
+    try:
+        data = await llm_svc.chat_json(messages)
+        skills = data.get("skills", [])
+        if not isinstance(skills, list):
+            skills = []
+        return {"skills": [str(s).strip() for s in skills if str(s).strip()][:20]}
+    except llm_svc.LLMError as e:
+        raise HTTPException(status_code=502, detail=f"抽取失敗：{e}")

@@ -1,10 +1,36 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { ChangeEvent } from "react";
 import { api } from "../api";
 import type { Profile } from "../types";
 
 export function Settings({ pushToast }: { pushToast: (text: string, kind?: "info" | "ok" | "err") => void }) {
   const [p, setP] = useState<Profile | null>(null);
   const [skillsText, setSkillsText] = useState("");
+  const [llmTest, setLlmTest] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const cvInputs = useRef<{ en: HTMLInputElement | null; zh: HTMLInputElement | null }>({
+    en: null,
+    zh: null,
+  });
+
+  const fileRef = (kind: "en" | "zh") => cvInputs.current[kind];
+
+  const pickCV = async (kind: "en" | "zh", e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setBusy(true);
+    try {
+      const updated = await api.uploadCV(kind, file);
+      setP(updated);
+      setSkillsText(updated.skills_json);
+      pushToast(`${kind === "en" ? "英文" : "中文"} CV 已上傳（data/cvs/）。`, "ok");
+    } catch (err) {
+      pushToast(`上傳失敗: ${(err as Error).message}`, "err");
+    } finally {
+      setBusy(false);
+    }
+  };
 
   useEffect(() => {
     api.profile().then((profile) => {
@@ -27,12 +53,49 @@ export function Settings({ pushToast }: { pushToast: (text: string, kind?: "info
         skills_json: skillsText,
         gba_age_under_29: p.gba_age_under_29,
         gba_edu_associate_degree: p.gba_edu_associate_degree,
+        llm_api_key: p.llm_api_key,
+        llm_fallback_api_key: p.llm_fallback_api_key,
+        auto_submit: p.auto_submit,
       });
       setP(updated);
       setSkillsText(updated.skills_json);
       pushToast("設定已儲存。", "ok");
     } catch (e) {
       pushToast(`儲存失敗: ${(e as Error).message}`, "err");
+    }
+  };
+
+  const testLLM = async () => {
+    setBusy(true);
+    setLlmTest(null);
+    try {
+      const r = await api.testLLM();
+      if (r.ok) {
+        setLlmTest(`✓ 連線正常（${r.model}，${r.latency_ms}ms）`);
+      } else {
+        setLlmTest(`✗ ${r.error}`);
+      }
+    } catch (e) {
+      setLlmTest(`✗ ${(e as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const extractSkills = async () => {
+    setBusy(true);
+    try {
+      const r = await api.extractSkills();
+      if (r.skills.length) {
+        setSkillsText(JSON.stringify(r.skills));
+        pushToast("已由 CV 抽取技能清單，確認後記得儲存。", "ok");
+      } else {
+        pushToast("抽唔到技能，可能 CV 冇內容。", "err");
+      }
+    } catch (e) {
+      pushToast(`抽取失敗: ${(e as Error).message}`, "err");
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -48,6 +111,40 @@ export function Settings({ pushToast }: { pushToast: (text: string, kind?: "info
       </div>
 
       <div className="detail" style={{ maxWidth: 640 }}>
+        <div className="section">
+          <h4>LLM（Cover Letter 生成用）</h4>
+          <div className="field">
+            <label>Primary API Key（DeepSeek）— 喺度填會覆蓋 .env</label>
+            <input
+              type="password"
+              value={p.llm_api_key}
+              onChange={(e) => set("llm_api_key", e.target.value)}
+              placeholder="sk-…（或者喺 .env 填 LLM_API_KEY）"
+            />
+          </div>
+          <div className="field">
+            <label>Fallback API Key（Qwen DashScope，可選）</label>
+            <input
+              type="password"
+              value={p.llm_fallback_api_key}
+              onChange={(e) => set("llm_fallback_api_key", e.target.value)}
+              placeholder="sk-…（或者喺 .env 填 LLM_FALLBACK_API_KEY）"
+            />
+          </div>
+          <div className="btnrow">
+            <button className="btn" onClick={save} disabled={busy}>
+              儲存設定
+            </button>
+            <button className="btn" onClick={testLLM} disabled={busy}>
+              測試連線
+            </button>
+          </div>
+          {llmTest && <div className={`note-inline ${llmTest.startsWith("✓") ? "ok" : "err"}`}>{llmTest}</div>}
+          <div className="note-inline" style={{ marginTop: 10 }}>
+            Key 只存喺本機 SQLite（`data/cvsubmit.db`），唔會送出街。填咗之後唔使改 .env 重啟。
+          </div>
+        </div>
+
         <div className="field">
           <label>姓名（Email 申請簽名用）</label>
           <input value={p.name} onChange={(e) => set("name", e.target.value)} placeholder="例如：陳大文" />
@@ -57,12 +154,40 @@ export function Settings({ pushToast }: { pushToast: (text: string, kind?: "info
           <input value={p.email} onChange={(e) => set("email", e.target.value)} placeholder="你嘅聯絡 email" />
         </div>
         <div className="field">
-          <label>英文 CV（PDF 路徑）</label>
-          <input value={p.cv_en_path} onChange={(e) => set("cv_en_path", e.target.value)} placeholder="/Users/you/Desktop/CV_en.pdf" />
+          <label>英文 CV（PDF）</label>
+          <div className="btnrow">
+            <button className="btn" onClick={() => fileRef("en")?.click()} disabled={busy}>
+              📁 揀檔案（英文 CV）…
+            </button>
+            <span style={{ fontFamily: "var(--mono)", fontSize: 11.5, color: "var(--ink-soft)", alignSelf: "center" }}>
+              {p.cv_en_path ? p.cv_en_path.split("/").pop() : "未設定"}
+            </span>
+          </div>
+          <input
+            type="file"
+            accept=".pdf"
+            ref={(el) => (cvInputs.current.en = el)}
+            style={{ display: "none" }}
+            onChange={(e) => pickCV("en", e)}
+          />
         </div>
         <div className="field">
-          <label>中文 CV（PDF 路徑）— gov.hk 中文 JD 用呢份</label>
-          <input value={p.cv_zh_path} onChange={(e) => set("cv_zh_path", e.target.value)} placeholder="/Users/you/Desktop/CV_zh.pdf" />
+          <label>中文 CV（PDF）— gov.hk 中文 JD 用呢份</label>
+          <div className="btnrow">
+            <button className="btn" onClick={() => fileRef("zh")?.click()} disabled={busy}>
+              📁 揀檔案（中文 CV）…
+            </button>
+            <span style={{ fontFamily: "var(--mono)", fontSize: 11.5, color: "var(--ink-soft)", alignSelf: "center" }}>
+              {p.cv_zh_path ? p.cv_zh_path.split("/").pop() : "未設定"}
+            </span>
+          </div>
+          <input
+            type="file"
+            accept=".pdf"
+            ref={(el) => (cvInputs.current.zh = el)}
+            style={{ display: "none" }}
+            onChange={(e) => pickCV("zh", e)}
+          />
         </div>
         <div className="field">
           <label>技能清單（JSON 陣列，用嚟 match score 同 CL）</label>
@@ -73,6 +198,11 @@ export function Settings({ pushToast }: { pushToast: (text: string, kind?: "info
             placeholder={'["AI","Python","LangGraph","React","TypeScript"]'}
             style={{ fontFamily: "var(--mono)", fontSize: 12.5 }}
           />
+          <div className="btnrow" style={{ marginTop: 8 }}>
+            <button className="btn" onClick={extractSkills} disabled={busy}>
+              ✦ 由 CV 自動抽取
+            </button>
+          </div>
         </div>
         <div className="field">
           <label>大灣區青年就業計劃資格（gov.hk 職位）</label>
@@ -95,6 +225,29 @@ export function Settings({ pushToast }: { pushToast: (text: string, kind?: "info
             </label>
           </div>
         </div>
+        <div className="section">
+          <h4>申請行為</h4>
+          <label className="check-row" style={{ alignItems: "flex-start" }}>
+            <input
+              type="checkbox"
+              checked={p.auto_submit}
+              onChange={(e) => set("auto_submit", e.target.checked)}
+              style={{ marginTop: 4 }}
+            />
+            <span>
+              <b>自動投遞</b> — 撳「申請」會自己填 CL + 上傳 CV 並直接提交（gov.hk 會自動發 email）。
+              <br />
+              <span style={{ color: "var(--accent-deep)", fontSize: 12 }}>
+                ⚠ 唔會停低等你確認。驗證碼／登入牆／缺 CL／缺 CV ／外部網站會自動煞停（改為手動模式提示）。
+              </span>
+              <br />
+              <span style={{ fontSize: 12, color: "var(--ink-soft)" }}>
+                關咗就係半自動：預填後等你喺瀏覽器自己撳提交。每份工喺詳情頁都可以單獨切換「自動／手動」。
+              </span>
+            </span>
+          </label>
+        </div>
+
         <button className="btn primary" onClick={save}>
           儲存設定
         </button>

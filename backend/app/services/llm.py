@@ -25,6 +25,36 @@ def _client(base_url: str, api_key: str) -> OpenAI:
     return OpenAI(base_url=base_url, api_key=api_key, timeout=60, max_retries=2)
 
 
+def _db_keys() -> tuple[str, str]:
+    """(primary_key, fallback_key) — UI-configured keys (DB) override .env."""
+    try:
+        from ..db import SessionLocal
+        from ..models import Profile
+
+        db = SessionLocal()
+        try:
+            profile = db.get(Profile, 1)
+            if profile:
+                return (profile.llm_api_key or "", profile.llm_fallback_api_key or "")
+        finally:
+            db.close()
+    except Exception:  # noqa: BLE001
+        pass
+    return ("", "")
+
+
+def _resolved_keys() -> tuple[str, str]:
+    db_primary, db_fallback = _db_keys()
+    primary = db_primary or settings.LLM_API_KEY
+    fallback = db_fallback or settings.LLM_FALLBACK_API_KEY
+    return primary, fallback
+
+
+def has_any_key() -> bool:
+    primary, fallback = _resolved_keys()
+    return bool(primary or fallback)
+
+
 def _chat(messages: list[dict], model: str, base_url: str, api_key: str,
           json_mode: bool, temperature: float = 0.3) -> str:
     client = _client(base_url, api_key)
@@ -40,33 +70,35 @@ def _chat(messages: list[dict], model: str, base_url: str, api_key: str,
 
 def chat(messages: list[dict], temperature: float = 0.3) -> str:
     """Plain text completion: primary provider, then fallback provider."""
-    if settings.LLM_API_KEY:
+    primary, fallback = _resolved_keys()
+    if primary:
         try:
             return _chat(messages, settings.LLM_MODEL, settings.LLM_BASE_URL,
-                         settings.LLM_API_KEY, json_mode=False, temperature=temperature)
+                         primary, json_mode=False, temperature=temperature)
         except Exception as e:  # noqa: BLE001
             log.warning("primary LLM failed (%s); trying fallback", e)
-    if settings.LLM_FALLBACK_API_KEY:
+    if fallback:
         return _chat(messages, settings.LLM_FALLBACK_MODEL, settings.LLM_FALLBACK_BASE_URL,
-                     settings.LLM_FALLBACK_API_KEY, json_mode=False, temperature=temperature)
+                     fallback, json_mode=False, temperature=temperature)
     raise LLMError("no LLM API key configured (set LLM_API_KEY or LLM_FALLBACK_API_KEY in .env)")
 
 
 def chat_json(messages: list[dict], temperature: float = 0.0) -> dict:
     """JSON completion with double-parse safety. Returns a dict or raises LLMError."""
+    primary, fallback = _resolved_keys()
     last_err: Exception | None = None
-    if settings.LLM_API_KEY:
+    if primary:
         try:
             content = _chat(messages, settings.LLM_MODEL, settings.LLM_BASE_URL,
-                            settings.LLM_API_KEY, json_mode=True, temperature=temperature)
+                            primary, json_mode=True, temperature=temperature)
             return _parse_json(content)
         except Exception as e:  # noqa: BLE001
             last_err = e
             log.warning("primary JSON LLM failed (%s); trying fallback", e)
-    if settings.LLM_FALLBACK_API_KEY:
+    if fallback:
         try:
             content = _chat(messages, settings.LLM_FALLBACK_MODEL, settings.LLM_FALLBACK_BASE_URL,
-                            settings.LLM_FALLBACK_API_KEY, json_mode=True, temperature=temperature)
+                            fallback, json_mode=True, temperature=temperature)
             return _parse_json(content)
         except Exception as e:  # noqa: BLE001
             last_err = e
@@ -92,3 +124,25 @@ def _parse_json(content: str) -> dict:
     if not isinstance(obj, dict):
         raise LLMError(f"model returned non-object JSON: {content[:200]}")
     return obj
+
+
+async def test_connection() -> dict:
+    """Cheapest possible LLM ping. Returns {ok, latency_ms, model, error}."""
+    import time
+
+    primary, fallback = _resolved_keys()
+    if not primary and not fallback:
+        return {"ok": False, "latency_ms": 0, "model": "",
+                "error": "未設定任何 LLM API key（設定頁或 .env）"}
+    t0 = time.monotonic()
+    try:
+        if primary:
+            reply = await chat([{"role": "user", "content": "請只回覆 OK"}], temperature=0.0)
+            model = settings.LLM_MODEL
+        else:
+            reply = await chat([{"role": "user", "content": "請只回覆 OK"}], temperature=0.0)
+            model = settings.LLM_FALLBACK_MODEL
+        latency = int((time.monotonic() - t0) * 1000)
+        return {"ok": True, "latency_ms": latency, "model": model, "error": ""}
+    except LLMError as e:
+        return {"ok": False, "latency_ms": 0, "model": "", "error": str(e)[:300]}

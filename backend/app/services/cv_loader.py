@@ -49,12 +49,34 @@ def load_skills() -> list[str]:
     return []
 
 
+def _profile() -> "Profile | None":
+    from ..db import SessionLocal
+    from ..models import Profile
+
+    try:
+        db = SessionLocal()
+        try:
+            return db.get(Profile, 1)
+        finally:
+            db.close()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def resolve_cv_path(language: str) -> str:
+    """CV path for a language: profile (UI upload/settings) overrides .env."""
+    profile = _profile()
+    if language == "zh":
+        return (profile.cv_zh_path if profile and profile.cv_zh_path else "") or settings.CV_ZH_PATH
+    return (profile.cv_en_path if profile and profile.cv_en_path else "") or settings.CV_EN_PATH
+
+
 def get_cv_text(language: str) -> str:
     """Return CV plain text for the given language ('en' | 'zh')."""
-    path = settings.CV_EN_PATH if language == "en" else settings.CV_ZH_PATH
+    path = resolve_cv_path(language)
     if not path:
         # fall back to whichever CV exists
-        path = settings.CV_EN_PATH or settings.CV_ZH_PATH
+        path = resolve_cv_path("zh" if language == "en" else "en")
     if not path:
-        raise CVError("no CV path configured in .env (CV_EN_PATH / CV_ZH_PATH)")
+        raise CVError("no CV path configured（設定頁用文件揀選器上傳，或 .env 填 CV_EN_PATH / CV_ZH_PATH）")
     return pdf_to_text(path)
