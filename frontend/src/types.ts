@@ -33,6 +33,7 @@ export interface Job {
   scraped_at: string;
   match_score: number;
   match_reason: string;
+  job_summary: string;
   apply_method: string;
   contact_email: string;
   contact_person: string;
@@ -92,7 +93,24 @@ export interface Profile {
   llm_api_key: string;
   llm_fallback_api_key: string;
   auto_submit: boolean;
+  intro_en: string;
+  intro_zh: string;
   updated_at: string;
+}
+
+export interface BatchResultItem {
+  id: number;
+  title: string;
+  ok: boolean;
+  submitted: boolean;
+  message: string;
+}
+
+export interface BatchStatus {
+  running: boolean;
+  total: number;
+  done: number;
+  results: BatchResultItem[];
 }
 
 export interface EmailPreview {

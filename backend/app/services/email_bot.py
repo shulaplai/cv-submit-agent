@@ -130,10 +130,12 @@ async def open_email_compose(row: JobApplication, cl_text: str, send: bool = Fal
     (uses the user's own Mail account; no SMTP credentials needed).
     send=False -> open a pre-filled draft for the user to review (semi-auto).
     """
+    from .apply_bot import build_application_text
     from .cv_loader import resolve_cv_path
 
     cv_path = resolve_cv_path("zh") or resolve_cv_path("en")
-    email = build_email(row, cl_text or "（請喺 UI 先生成/編輯 Cover Letter）", cv_path)
+    text = build_application_text(row, cl_text)
+    email = build_email(row, text or "（請喺 UI 先生成/編輯 Cover Letter）", cv_path)
 
     if send:
         ok, note = send_email_via_mail(email)

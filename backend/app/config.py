@@ -44,6 +44,14 @@ class Settings(BaseSettings):
     # The UI (settings) and per-job manual mode can override this.
     AUTO_SUBMIT: bool = True
 
+    # --- Browser automation ---
+    # JobsDB/OfferToday automation connects to a real Chrome window via CDP.
+    # IMPORTANT: Chrome 136+ ignores --remote-debugging-port on the DEFAULT
+    # profile (security), so we use a DEDICATED profile dir. The user logs in
+    # ONCE there; their normal Chrome is never touched.
+    CHROME_CDP_URL: str = "http://127.0.0.1:9222"
+    CHROME_PROFILE_DIR: str = "~/Library/Application Support/Google/Chrome-CVSubmit"
+
     # --- GBA scheme eligibility (jobs.gov.hk GBA vacancies) ---
     GBA_AGE_UNDER_29: bool = True
     GBA_EDU_ASSOCIATE_DEGREE: bool = True

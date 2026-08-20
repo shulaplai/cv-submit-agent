@@ -222,6 +222,55 @@ a { color: inherit; }
   white-space: nowrap;
 }
 
+/* one-glance AI job summary on cards */
+.job-summary {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink-soft);
+  background: rgba(25, 22, 17, 0.045);
+  border-left: 3px solid var(--teal);
+  padding: 7px 10px;
+  border-radius: 0 6px 6px 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* batch selection */
+.select-check {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  width: 17px;
+  height: 17px;
+  accent-color: var(--accent);
+  cursor: pointer;
+  z-index: 2;
+}
+.job-card { position: relative; }
+.job-card.checked {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(217, 59, 38, 0.35);
+}
+.batch-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--ink);
+  color: var(--paper-3);
+  border-radius: 8px;
+  padding: 10px 16px;
+  margin-bottom: 18px;
+  box-shadow: var(--shadow);
+  position: sticky;
+  top: 10px;
+  z-index: 20;
+}
+.batch-bar b { color: var(--accent); font-family: var(--serif); font-size: 18px; }
+.batch-bar .goalbar { background: rgba(242, 236, 223, 0.2); min-width: 160px; }
+.batch-bar .goalbar-fill { background: var(--accent); }
+
 /* ---------------- filter bar ---------------- */
 .filterbar {
   display: flex;

@@ -30,6 +30,9 @@ class Profile(Base):
     llm_fallback_api_key: Mapped[str] = mapped_column(String(300), default="")
     # True = auto-submit applications (fill + click submit / send email)
     auto_submit: Mapped[bool] = mapped_column(default=True)
+    # Short self-introduction embedded in application messages/emails
+    intro_en: Mapped[str] = mapped_column(Text, default="")
+    intro_zh: Mapped[str] = mapped_column(Text, default="")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
@@ -54,6 +57,7 @@ class JobApplication(Base):
     scraped_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     match_score: Mapped[int] = mapped_column(Integer, default=0)
     match_reason: Mapped[str] = mapped_column(Text, default="")
+    job_summary: Mapped[str] = mapped_column(Text, default="")  # AI short summary (zh) for display
     apply_method: Mapped[str] = mapped_column(String(20), default="form")  # form | external_link | email
     contact_email: Mapped[str] = mapped_column(String(200), default="")
     contact_person: Mapped[str] = mapped_column(String(200), default="")

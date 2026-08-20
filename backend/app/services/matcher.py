@@ -80,3 +80,32 @@ async def score_job(job: dict, skills: list[str] | None = None) -> tuple[int, st
         pre = keyword_score(job.get("title", ""), job.get("short_desc", ""), skills)
         return pre, ""
     return await llm_match_score(job, skills)
+
+
+async def summarize_job(job: dict) -> str:
+    """AI one-glance job summary in Traditional Chinese for UI display.
+
+    Covers what the role is, core requirements, salary and how to apply.
+    """
+    jd = (job.get("jd_text") or job.get("short_desc") or "")[:3000]
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "你係招聘分析師。用繁體中文寫一段 80–130 字嘅職位摘要，俾求職者一眼睇明："
+                "①做咩 ②核心要求 ③薪酬/待遇 ④點申請（email 或平台）。"
+                "直接輸出摘要文字，唔好加標題、唔好加 bullet 符號。"
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"職位：{job.get('title', '')}\n公司：{job.get('company', '')}\n"
+                f"地點：{job.get('location', '')}\n薪酬：{job.get('salary_range', '')}\n"
+                f"申請方式：{job.get('apply_method', '')}"
+                f"{('（email: ' + job['contact_email'] + '）') if job.get('contact_email') else ''}\n\n"
+                f"職位描述：\n{jd}"
+            ),
+        },
+    ]
+    return (await llm_svc.chat(messages, temperature=0.3)).strip()

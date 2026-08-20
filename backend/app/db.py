@@ -32,7 +32,10 @@ _COLUMN_MIGRATIONS = [
     ("profiles", "llm_api_key", "VARCHAR(300) NOT NULL DEFAULT ''"),
     ("profiles", "llm_fallback_api_key", "VARCHAR(300) NOT NULL DEFAULT ''"),
     ("profiles", "auto_submit", "BOOLEAN NOT NULL DEFAULT 1"),
+    ("profiles", "intro_en", "TEXT NOT NULL DEFAULT ''"),
+    ("profiles", "intro_zh", "TEXT NOT NULL DEFAULT ''"),
     ("job_applications", "dup_key", "VARCHAR(300) NOT NULL DEFAULT ''"),
+    ("job_applications", "job_summary", "TEXT NOT NULL DEFAULT ''"),
 ]
 
 

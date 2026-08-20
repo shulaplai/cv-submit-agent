@@ -1,4 +1,4 @@
-import type { EmailPreview, Job, JobList, Profile, ScanStatus, Stats } from "./types";
+import type { BatchStatus, EmailPreview, Job, JobList, Profile, ScanStatus, Stats } from "./types";
 
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = {};
@@ -59,6 +59,11 @@ export const api = {
     { method: "POST" }
   ),
   extractSkills: () => req<{ skills: string[] }>("/api/profile/extract-skills", { method: "POST" }),
+  generateIntro: (lang: "zh" | "en") => {
+    const fd = new FormData();
+    fd.append("lang", lang);
+    return req<{ lang: string; text: string }>("/api/profile/generate-intro", { method: "POST", body: fd });
+  },
   emailPreview: (id: number) => req<EmailPreview>(`/api/jobs/${id}/email-preview`),
   uploadCV: (kind: "en" | "zh", file: File) => {
     const fd = new FormData();
@@ -66,4 +71,13 @@ export const api = {
     fd.append("file", file);
     return req<Profile>("/api/profile/cv", { method: "POST", body: fd });
   },
+  batchApply: (ids: number[], auto?: boolean) =>
+    req<{ started: boolean; total: number; message: string }>("/api/jobs/batch-apply", {
+      method: "POST",
+      body: JSON.stringify({ ids, auto }),
+    }),
+  batchStatus: () => req<BatchStatus>("/api/jobs/batch-status"),
+  browserStatus: () => req<{ using_real_chrome: boolean; chrome_running: boolean; cdp_url: string; note: string }>("/api/browser/status"),
+  launchChrome: () => req<{ ok: boolean; restart_needed?: boolean; message: string }>("/api/browser/launch-chrome", { method: "POST" }),
+  restartChrome: () => req<{ ok: boolean; restart_needed?: boolean; message: string }>("/api/browser/restart-chrome", { method: "POST" }),
 };

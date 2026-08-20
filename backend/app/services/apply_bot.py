@@ -40,6 +40,29 @@ def _cv_exists(path: str) -> bool:
     return bool(path) and Path(path).exists()
 
 
+def build_application_text(row: JobApplication, cl_text: str) -> str:
+    """Saved self-intro (profile, in the JD language) + cover letter.
+
+    This is the text embedded into application messages / emails.
+    """
+    from ..db import SessionLocal
+    from ..models import Profile
+
+    intro = ""
+    try:
+        db = SessionLocal()
+        try:
+            profile = db.get(Profile, 1)
+            if profile:
+                intro = profile.intro_zh if row.jd_language == "zh" else profile.intro_en
+        finally:
+            db.close()
+    except Exception:  # noqa: BLE001
+        pass
+    parts = [p for p in (intro.strip(), cl_text.strip()) if p]
+    return "\n\n".join(parts)
+
+
 async def open_apply(row: JobApplication, cl_text: str = "", auto: bool = False) -> dict:
     """Open + prefill (or auto-submit) the application flow for a job."""
     if row.apply_method == "external_link":
@@ -86,7 +109,7 @@ async def _jobsdb(row: JobApplication, cl_text: str, auto: bool) -> dict:
     if not auto:
         note = "已開定 JobsDB 申請頁。"
         if cl_text:
-            filled = await _fill_first_textarea(page, cl_text)
+            filled = await _fill_first_textarea(page, build_application_text(row, cl_text))
             note += "已預填 Cover Letter。" if filled else "（未揾到 CL 輸入框，請手動貼上。）"
         return {"ok": True, "kind": "form", "submitted": False, "url": page.url, "message": note}
 
@@ -108,7 +131,7 @@ async def _offertoday(row: JobApplication, cl_text: str, auto: bool) -> dict:
     if not auto:
         note = "已開定 OfferToday 職位頁並撳咗「傳送投遞消息」。"
         if cl_text:
-            filled = await _fill_first_textarea(page, cl_text)
+            filled = await _fill_first_textarea(page, build_application_text(row, cl_text))
             note += "已預填投遞訊息。" if filled else "（未揾到訊息輸入框，請手動填。）"
         return {"ok": True, "kind": "form", "submitted": False, "url": page.url, "message": note}
 
@@ -129,7 +152,7 @@ async def _auto_submit_platform(page, row: JobApplication, cl_text: str) -> dict
     try:
         ta = page.locator("textarea").first
         if await ta.count() and await ta.is_visible():
-            await ta.fill(cl_text[:4000])
+            await ta.fill(build_application_text(row, cl_text)[:4000])
     except Exception:  # noqa: BLE001
         pass
 

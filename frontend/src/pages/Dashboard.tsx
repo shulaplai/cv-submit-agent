@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api";
-import { PlatformBadge, ScoreRing, StatusChip, fmtDate, latestCL } from "../components";
-import type { Job, JobList } from "../types";
+import { Modal, PlatformBadge, ScoreRing, StatusChip, fmtDate, latestCL } from "../components";
+import type { BatchStatus, Job, JobList } from "../types";
 import { JobDetail } from "./JobDetail";
 
 export function Dashboard({
@@ -25,6 +25,10 @@ export function Dashboard({
   }>({ applied7: 0, applied30: 0, total: 0, weeklyGoal: 15, appliedThisWeek: 0 });
   const [selected, setSelected] = useState<Job | null>(null);
   const [loading, setLoading] = useState(true);
+  const [checked, setChecked] = useState<Set<number>>(new Set());
+  const [batch, setBatch] = useState<BatchStatus | null>(null);
+  const [showBatchResult, setShowBatchResult] = useState(false);
+  const pollRef = useRef<number | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -50,6 +54,49 @@ export function Dashboard({
   useEffect(() => {
     load();
   }, [load]);
+
+  // poll batch progress while running
+  useEffect(() => {
+    if (batch?.running) {
+      const t = window.setInterval(async () => {
+        try {
+          const s = await api.batchStatus();
+          setBatch(s);
+          if (!s.running) {
+            setShowBatchResult(true);
+            load();
+          }
+        } catch {
+          /* ignore */
+        }
+      }, 2500);
+      pollRef.current = t;
+      return () => window.clearInterval(t);
+    }
+    return undefined;
+  }, [batch?.running, load]);
+
+  const toggleCheck = (id: number) => {
+    setChecked((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const runBatch = async () => {
+    if (!checked.size) return;
+    try {
+      const r = await api.batchApply([...checked]);
+      pushToast(r.message, "info");
+      setBatch({ running: true, total: r.total, done: 0, results: [] });
+      setShowBatchResult(false);
+      setChecked(new Set());
+    } catch (e) {
+      pushToast(`一齊投遞失敗: ${(e as Error).message}`, "err");
+    }
+  };
 
   const doBackfill = async () => {
     try {
@@ -150,6 +197,36 @@ export function Dashboard({
         </button>
       </div>
 
+      {(checked.size > 0 || batch?.running) && (
+        <div className="batch-bar">
+          {batch?.running ? (
+            <>
+              <span className="scan-status" style={{ margin: 0 }}>
+                ▣ 一齊投遞中：{batch.done}/{batch.total}
+              </span>
+              <div className="goalbar" style={{ flex: 1, marginTop: 0 }}>
+                <div
+                  className="goalbar-fill"
+                  style={{ width: `${(batch.done / Math.max(1, batch.total)) * 100}%` }}
+                />
+              </div>
+            </>
+          ) : (
+            <>
+              <span>
+                已揀 <b>{checked.size}</b> 份
+              </span>
+              <button className="btn primary" onClick={runBatch}>
+                ▶ 一齊自動投遞
+              </button>
+              <button className="btn" onClick={() => setChecked(new Set())}>
+                清除
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
       {loading ? (
         <div className="empty">載入中…</div>
       ) : data.items.length === 0 ? (
@@ -164,8 +241,21 @@ export function Dashboard({
         <div className="job-grid">
           {data.items.map((job) => {
             const cl = latestCL(job);
+            const isChecked = checked.has(job.id);
             return (
-              <div key={job.id} className="job-card" onClick={() => openDetail(job)}>
+              <div
+                key={job.id}
+                className={`job-card ${isChecked ? "checked" : ""}`}
+                onClick={() => openDetail(job)}
+              >
+                <input
+                  type="checkbox"
+                  className="select-check"
+                  checked={isChecked}
+                  onClick={(e) => e.stopPropagation()}
+                  onChange={() => toggleCheck(job.id)}
+                  title="揀選（可以一齊自動投遞）"
+                />
                 <div className="top">
                   <div>
                     <PlatformBadge platform={job.platform} />
@@ -183,6 +273,11 @@ export function Dashboard({
                   <span>{job.location || "—"}</span>
                   <span>{job.salary_range || "薪酬不詳"}</span>
                 </div>
+                {job.job_summary && (
+                  <div className="job-summary" title={job.job_summary}>
+                    {job.job_summary}
+                  </div>
+                )}
                 <div className="foot">
                   <StatusChip status={job.status} />
                   <span className={`cl-ready ${cl ? "" : "no"}`}>
@@ -216,6 +311,34 @@ export function Dashboard({
           }}
           pushToast={pushToast}
         />
+      )}
+
+      {showBatchResult && batch && !batch.running && (
+        <Modal onClose={() => setShowBatchResult(false)}>
+          <h2 style={{ marginTop: 0 }}>
+            一齊投遞結果 <span className="stamp">{batch.results.filter((r) => r.submitted).length}/{batch.total}</span>
+          </h2>
+          <div className="jd-body" style={{ maxHeight: "50vh" }}>
+            {batch.results.map((r) => (
+              <div key={r.id} style={{ marginBottom: 10, borderBottom: "1px dashed var(--line)", paddingBottom: 8 }}>
+                <div style={{ fontWeight: 600 }}>
+                  {r.submitted ? "✔" : r.ok ? "➖" : "✗"} {r.title || `#${r.id}`}
+                </div>
+                <div style={{ fontSize: 12.5, color: r.submitted ? "var(--teal)" : "var(--ink-soft)" }}>
+                  {r.message}
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="btnrow" style={{ marginTop: 12 }}>
+            <button className="btn primary" onClick={() => setShowBatchResult(false)}>
+              關閉
+            </button>
+            <button className="btn" onClick={() => onOpenHistory()}>
+              去投遞檔案睇結果
+            </button>
+          </div>
+        </Modal>
       )}
     </>
   );

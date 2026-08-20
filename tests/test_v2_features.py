@@ -213,3 +213,182 @@ def test_resolve_cv_path_profile_override(db):
     db.commit()
     assert resolve_cv_path("en") == "/tmp/from_profile_en.pdf"
     assert resolve_cv_path("zh") == "/tmp/from_profile_zh.pdf"
+
+
+# ------------------------------------------------------------ intro + batch apply
+
+def test_profile_intro_roundtrip(client):
+    r = client.put("/api/profile", json={"intro_en": "Hello I am a dev", "intro_zh": "你好，我係開發者"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["intro_en"] == "Hello I am a dev"
+    assert body["intro_zh"] == "你好，我係開發者"
+
+
+def test_build_application_text_includes_intro(db):
+    from app.models import JobApplication, Profile
+    from app.services.apply_bot import build_application_text
+
+    profile = db.get(Profile, 1)
+    if profile is None:
+        profile = Profile(id=1)
+        db.add(profile)
+    profile.intro_zh = "我係申請人簡介"
+    profile.intro_en = "I am the applicant intro"
+    db.commit()
+
+    row_zh = JobApplication(platform="govhk", job_id_on_platform="x", title="t", jd_language="zh")
+    text = build_application_text(row_zh, "CL 內容")
+    assert text == "我係申請人簡介\n\nCL 內容"
+
+    row_en = JobApplication(platform="jobsdb", job_id_on_platform="y", title="t", jd_language="en")
+    assert "I am the applicant intro" in build_application_text(row_en, "CL body")
+
+
+def test_batch_skips_applied_and_external(db):
+    import asyncio
+
+    from app.models import JobApplication
+    from app.routers.jobs import _batch_state, _run_batch
+
+    a = JobApplication(platform="jobsdb", job_id_on_platform="990001",
+                       title="已投份", status="applied")
+    b = JobApplication(platform="jobsdb", job_id_on_platform="990002",
+                       title="外部份", status="pending_review",
+                       apply_method="external_link", external_url="https://example.com")
+    db.add_all([a, b])
+    db.commit()
+    db.refresh(a)
+    db.refresh(b)
+
+    asyncio.run(_run_batch([a.id, b.id], False))
+    results = _batch_state["results"]
+    assert len(results) == 2
+    assert results[0]["message"] == "已經投咗，skip"
+    assert "外部網站" in results[1]["message"]
+    assert _batch_state["running"] is False
+
+
+# ------------------------------------------------------------ AI summary + AI intro
+
+def test_summarize_job_mocked(monkeypatch):
+    import asyncio
+
+    from app.services import matcher
+
+    async def fake_chat(messages, temperature=0.3):
+        assert "職位摘要" in messages[0]["content"] or "一眼睇明" in messages[0]["content"]
+        return "呢份工係 AI 工程師，負責模型開發，要求 Python 經驗，月薪 $18K-25K。"
+
+    monkeypatch.setattr("app.services.matcher.llm_svc.chat", fake_chat)
+    text = asyncio.run(matcher.summarize_job({
+        "title": "AI 工程師", "company": "X", "location": "深圳",
+        "salary_range": "$18K-25K", "jd_text": "負責 AI 模型開發。",
+        "apply_method": "email", "contact_email": "hr@x.com",
+    }))
+    assert "AI 工程師" in text
+
+
+def test_generate_intro_requires_cv(client):
+    r = client.post("/api/profile/generate-intro", data={"lang": "zh"})
+    assert r.status_code == 400  # no CV in test env
+
+
+def test_job_summary_in_list(client, db):
+    from app.models import JobApplication
+
+    row = JobApplication(platform="govhk", job_id_on_platform="990099",
+                         title="AI 工程師", status="pending_review",
+                         job_summary="呢份工做 AI 模型開發，月薪 $20K。")
+    db.add(row)
+    db.commit()
+    r = client.get("/api/jobs?q=AI")
+    assert r.status_code == 200
+    item = next(j for j in r.json()["items"] if j["job_id_on_platform"] == "990099")
+    assert "AI 模型開發" in item["job_summary"]
+
+
+# ------------------------------------------------------------ real-Chrome CDP
+
+def test_cdp_unavailable_falls_back_gracefully():
+    import asyncio
+
+    from app.services.cdp_browser import cdp_available, close_cdp
+
+    async def check():
+        try:
+            ok = await cdp_available()
+            return ok
+        finally:
+            await close_cdp()
+
+    assert asyncio.run(check()) is False  # no Chrome debug port in test env
+
+
+def test_launch_chrome_command(monkeypatch):
+    from app.services import cdp_browser
+
+    captured = {}
+
+    class R:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(cmd, capture_output=False, text=False, timeout=None):
+        captured["cmd"] = cmd
+        return R()
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    ok, note = cdp_browser.launch_chrome_for_cdp()
+    assert ok
+    args = " ".join(captured["cmd"])
+    assert "--remote-debugging-port=9222" in args
+    assert "--user-data-dir=" in args
+    assert "Chrome-CVSubmit" in args  # dedicated profile (Chrome 136+ blocks default-profile CDP)
+
+
+def test_dedicated_chrome_running(monkeypatch):
+    from app.services import cdp_browser
+
+    class R:
+        returncode = 0
+        stdout = "12345\n"
+        stderr = ""
+
+    monkeypatch.setattr("subprocess.run", lambda *a, **k: R())
+    assert cdp_browser.dedicated_chrome_running() is True
+
+
+def test_quit_dedicated_chrome(monkeypatch):
+    from app.services import cdp_browser
+
+    class R:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(cmd, capture_output=False, text=False, timeout=None):
+        return R()
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    ok, _ = cdp_browser.quit_dedicated_chrome()
+    assert ok
+
+
+def test_restart_chrome_endpoint_runs(monkeypatch):
+    """restart-chrome should be callable (mocked subprocess + CDP failure)."""
+    import asyncio
+
+    from app.routers import browser
+
+    class R:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    monkeypatch.setattr("app.services.cdp_browser.subprocess.run", lambda *a, **k: R())
+    # CDP will be unavailable in the test env -> endpoint returns ok=False but no crash
+    res = asyncio.run(browser.restart_chrome())
+    assert "ok" in res
+    assert "message" in res

@@ -226,6 +226,12 @@ export function JobDetail({
       {job.match_reason && (
         <div className="note-inline">匹配理由：{job.match_reason}</div>
       )}
+      {job.job_summary && (
+        <div className="note-inline" style={{ borderStyle: "solid", borderColor: "var(--teal)" }}>
+          <b style={{ color: "var(--teal)" }}>⚡ AI 摘要：</b>
+          {job.job_summary}
+        </div>
+      )}
       {isGBA && (
         <div className="note-inline" style={{ borderStyle: "solid", borderColor: "var(--gold)" }}>
           ⚠ 大灣區青年就業計劃職位：須 29 歲或以下、副學位或以上學歷、可合法喺香港及內地受僱。

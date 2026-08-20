@@ -211,6 +211,15 @@ async def _enrich_one(db: Session, row: JobApplication, platform: str,
     row.status = "pending_review"
     db.flush()
 
+    # 3. one-glance job summary for the UI (best-effort, zh)
+    if not row.job_summary and row.jd_text:
+        try:
+            from .matcher import summarize_job
+            row.job_summary = await summarize_job(job_dict)
+        except LLMError:
+            log.warning("summary failed for %s/%s", platform, row.job_id_on_platform)
+        db.flush()
+
 
 def _draft_from_row(row: JobApplication):
     from .scraper_base import JobDraft

@@ -8,10 +8,51 @@ export function Settings({ pushToast }: { pushToast: (text: string, kind?: "info
   const [skillsText, setSkillsText] = useState("");
   const [llmTest, setLlmTest] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [browserOk, setBrowserOk] = useState(false);
+  const [chromeRunning, setChromeRunning] = useState(false);
+  const [browserNote, setBrowserNote] = useState("檢查 Chrome 連線中…");
   const cvInputs = useRef<{ en: HTMLInputElement | null; zh: HTMLInputElement | null }>({
     en: null,
     zh: null,
   });
+
+  useEffect(() => {
+    api.browserStatus().then((s) => {
+      setBrowserOk(s.using_real_chrome);
+      setChromeRunning(s.chrome_running);
+      setBrowserNote(s.note);
+    }).catch(() => setBrowserNote("檢查唔到（server 未起？）"));
+  }, []);
+
+  const openChrome = async () => {
+    setBusy(true);
+    try {
+      const r = await api.launchChrome();
+      setBrowserNote(r.message);
+      setBrowserOk(r.ok);
+      if (r.ok) pushToast("Chrome 已連上 — 自動投遞會用你登入咗嘅狀態。", "ok");
+    } catch (e) {
+      setBrowserNote(`失敗: ${(e as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const restartChrome = async () => {
+    setBusy(true);
+    setBrowserNote("正在退出 Chrome 並重開（分頁會還原）…");
+    try {
+      const r = await api.restartChrome();
+      setBrowserNote(r.message);
+      setBrowserOk(r.ok);
+      setChromeRunning(false);
+      if (r.ok) pushToast("Chrome 已重開並連上！", "ok");
+    } catch (e) {
+      setBrowserNote(`失敗: ${(e as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const fileRef = (kind: "en" | "zh") => cvInputs.current[kind];
 
@@ -56,6 +97,8 @@ export function Settings({ pushToast }: { pushToast: (text: string, kind?: "info
         llm_api_key: p.llm_api_key,
         llm_fallback_api_key: p.llm_fallback_api_key,
         auto_submit: p.auto_submit,
+        intro_en: p.intro_en,
+        intro_zh: p.intro_zh,
       });
       setP(updated);
       setSkillsText(updated.skills_json);
@@ -94,6 +137,20 @@ export function Settings({ pushToast }: { pushToast: (text: string, kind?: "info
       }
     } catch (e) {
       pushToast(`抽取失敗: ${(e as Error).message}`, "err");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const genIntro = async (lang: "zh" | "en") => {
+    setBusy(true);
+    try {
+      const r = await api.generateIntro(lang);
+      if (lang === "zh") set("intro_zh", r.text);
+      else set("intro_en", r.text);
+      pushToast(`${lang === "zh" ? "中文" : "English"}簡介已生成，可以編輯後儲存。`, "ok");
+    } catch (e) {
+      pushToast(`生成失敗: ${(e as Error).message}`, "err");
     } finally {
       setBusy(false);
     }
@@ -152,6 +209,40 @@ export function Settings({ pushToast }: { pushToast: (text: string, kind?: "info
         <div className="field">
           <label>Email</label>
           <input value={p.email} onChange={(e) => set("email", e.target.value)} placeholder="你嘅聯絡 email" />
+        </div>
+        <div className="section">
+          <h4>自我簡介（申請時自動嵌入）</h4>
+          <div className="field">
+            <label>中文簡介（中文 JD 嘅工、gov.hk email、OfferToday 訊息用）</label>
+            <textarea
+              rows={3}
+              value={p.intro_zh}
+              onChange={(e) => set("intro_zh", e.target.value)}
+              placeholder="例如：你好，我係一位專注 AI 同全端開發嘅工程師，有 X 年經驗，熟悉 LangGraph、React、TypeScript，希望有機會加入貴公司。"
+            />
+            <div className="btnrow" style={{ marginTop: 8 }}>
+              <button className="btn" onClick={() => genIntro("zh")} disabled={busy}>
+                ✦ AI 生成中文簡介
+              </button>
+            </div>
+          </div>
+          <div className="field">
+            <label>English intro（英文 JD 嘅工用）</label>
+            <textarea
+              rows={3}
+              value={p.intro_en}
+              onChange={(e) => set("intro_en", e.target.value)}
+              placeholder="e.g. Hi, I am a software engineer focused on AI and full-stack development..."
+            />
+            <div className="btnrow" style={{ marginTop: 8 }}>
+              <button className="btn" onClick={() => genIntro("en")} disabled={busy}>
+                ✦ AI 生成 English 簡介
+              </button>
+            </div>
+          </div>
+          <div className="note-inline" style={{ borderStyle: "solid" }}>
+            呢段簡介會加喺 Cover Letter 前面，一齊成為申請訊息／email 內文。
+          </div>
         </div>
         <div className="field">
           <label>英文 CV（PDF）</label>
@@ -223,6 +314,33 @@ export function Settings({ pushToast }: { pushToast: (text: string, kind?: "info
               />
               副學位或以上學歷
             </label>
+          </div>
+        </div>
+        <div className="section">
+          <h4>自動投遞瀏覽器（JobsDB / OfferToday）</h4>
+          <div className={`note-inline ${browserOk ? "ok" : "err"}`} style={{ borderStyle: "solid" }}>
+            {browserNote}
+          </div>
+          {!browserOk && (
+            <>
+              <div className="btnrow" style={{ marginTop: 10 }}>
+                <button className="btn" onClick={openChrome} disabled={busy}>
+                  🔗 開啟專用 Chrome
+                </button>
+                {chromeRunning && (
+                  <button className="btn primary" onClick={restartChrome} disabled={busy}>
+                    🔁 重啟專用 Chrome
+                  </button>
+                )}
+              </div>
+              <div className="note-inline" style={{ marginTop: 8 }}>
+                ⚠ Chrome 136+ 官方封咗「用預設 profile 遠端操控」，所以用一個<b>專用 Chrome 視窗</b>（唔會掂你原本 Chrome）。
+                第一次開啟後，喺嗰個視窗<b>登入 JobsDB / OfferToday 一次</b>，之後會一直記住。
+              </div>
+            </>
+          )}
+          <div className="note-inline" style={{ marginTop: 10 }}>
+            未連接時會用後備方案（獨立 Playwright 瀏覽器，登入一次，session 存本機）。
           </div>
         </div>
         <div className="section">

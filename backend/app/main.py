@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import settings
 from .db import init_db
-from .routers import jobs, profile, scan, stats
+from .routers import browser, jobs, profile, scan, stats
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger(__name__)
@@ -60,6 +60,7 @@ app.include_router(profile.router)
 app.include_router(jobs.router)
 app.include_router(scan.router)
 app.include_router(stats.router)
+app.include_router(browser.router)
 
 
 @app.get("/api/health")

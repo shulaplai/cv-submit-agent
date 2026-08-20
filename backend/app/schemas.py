@@ -34,6 +34,7 @@ class JobApplicationOut(BaseModel):
     scraped_at: datetime
     match_score: int
     match_reason: str
+    job_summary: str = ""
     apply_method: str
     contact_email: str
     contact_person: str
@@ -88,6 +89,8 @@ class ProfileIn(BaseModel):
     llm_api_key: Optional[str] = None
     llm_fallback_api_key: Optional[str] = None
     auto_submit: Optional[bool] = None
+    intro_en: Optional[str] = None
+    intro_zh: Optional[str] = None
 
 
 class ProfileOut(BaseModel):
@@ -103,6 +106,8 @@ class ProfileOut(BaseModel):
     llm_api_key: str
     llm_fallback_api_key: str
     auto_submit: bool
+    intro_en: str
+    intro_zh: str
     updated_at: datetime
 
 

@@ -39,11 +39,14 @@ class JobDraft:
 
 
 class BrowserSession:
-    """Persistent (logged-in) Chromium context for one platform.
+    """Browser session for one platform.
 
-    The browser window stays visible so the human can log in once and
-    review every pre-filled application before submitting.
+    JobsDB / OfferToday connect to the user's REAL Chrome via CDP (their
+    existing login state) when available; otherwise fall back to a persistent
+    Playwright profile where the user logs in once. gov.hk needs no login.
     """
+
+    CDP_PLATFORMS = ("jobsdb", "offertoday")
 
     def __init__(self, platform: str, headless: bool = False, keep_open: bool = False):
         self.platform = platform
@@ -52,12 +55,22 @@ class BrowserSession:
         self.user_data_dir = settings.PROFILES_DIR / platform
         self._pw: Playwright | None = None
         self.context = None
+        self.using_cdp = False
 
     async def __aenter__(self):
         await self.start()
         return self.context
 
     async def start(self):
+        if self.platform in self.CDP_PLATFORMS:
+            from .cdp_browser import get_cdp_browser
+
+            browser = await get_cdp_browser()
+            if browser is not None and browser.contexts:
+                self.context = browser.contexts[0]
+                self.using_cdp = True
+                return self.context
+        # fallback: dedicated persistent profile (user logs in once)
         self._pw = await async_playwright().start()
         self.user_data_dir.mkdir(parents=True, exist_ok=True)
         self.context = await self._pw.chromium.launch_persistent_context(
@@ -73,6 +86,10 @@ class BrowserSession:
             await self.close()
 
     async def close(self):
+        if self.using_cdp:
+            # never close the user's real Chrome — just drop our reference
+            self.context = None
+            return
         if self.context is not None:
             try:
                 await self.context.close()
@@ -105,6 +122,8 @@ async def close_all_browsers() -> None:
     for s in list(_browser_sessions.values()):
         await s.close()
     _browser_sessions.clear()
+    from .cdp_browser import close_cdp
+    await close_cdp()
 
 
 async def human_delay(lo: float = 1.0, hi: float = 4.0) -> None:

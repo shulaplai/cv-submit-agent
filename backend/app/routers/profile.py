@@ -100,3 +100,42 @@ async def extract_skills():
         return {"skills": [str(s).strip() for s in skills if str(s).strip()][:20]}
     except llm_svc.LLMError as e:
         raise HTTPException(status_code=502, detail=f"抽取失敗：{e}")
+
+
+@router.post("/generate-intro")
+async def generate_intro(lang: str = Form("zh")):
+    """AI-write the self-intro (zh or en) from the CV + skills. Returns text
+    for the user to review/edit before saving (never auto-saves)."""
+    if lang not in ("zh", "en"):
+        raise HTTPException(status_code=400, detail="lang 必須係 zh 或 en")
+    try:
+        cv_text = get_cv_text(lang)
+    except CVError as e:
+        raise HTTPException(status_code=400, detail=f"讀唔到 CV：{e}")
+    from ..services.cv_loader import load_skills
+
+    skills = load_skills()
+    target = "AI 工程師 / Agent Developer / Full-stack Developer"
+    if lang == "zh":
+        system = (
+            "根據求職者履歷寫一段 60–100 字嘅繁體中文自我簡介，用喺申請信開頭。"
+            "語氣專業自信、唔吹噓，只可以用履歷事實。直接輸出簡介文字，唔加稱呼/標題。"
+        )
+    else:
+        system = (
+            "Write a 50–90 word English self-introduction for the applicant's cover "
+            "letters, based ONLY on CV facts. Professional and confident, no "
+            "exaggeration. Output only the introduction text."
+        )
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": (
+            f"目標職位方向：{target}\n技能：{', '.join(skills) if skills else '（未設定）'}\n\n"
+            f"履歷：\n{cv_text[:4000]}"
+        )},
+    ]
+    try:
+        text = await llm_svc.chat(messages, temperature=0.7)
+        return {"lang": lang, "text": text.strip()}
+    except llm_svc.LLMError as e:
+        raise HTTPException(status_code=502, detail=f"生成失敗：{e}")

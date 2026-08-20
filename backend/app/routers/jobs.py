@@ -1,4 +1,5 @@
 """Job application endpoints: list, detail, enrich, CL versions, apply actions."""
+import asyncio
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -7,7 +8,7 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, selectinload
 
 from ..config import settings
-from ..db import get_db
+from ..db import SessionLocal, get_db
 from ..models import CoverLetter, JobApplication, Profile, utcnow
 from ..schemas import (
     CoverLetterEditIn,
@@ -79,11 +80,104 @@ def list_jobs(status: str | None = None, platform: str | None = None, q: str = "
                                  JobApplication.company.like(like)))
     total = query.count()
     hidden = db.query(JobApplication).filter(JobApplication.status == "low_match").count() if not show_all else 0
-    rows = (query.order_by(JobApplication.created_at.desc())
+    rows = (query.order_by(JobApplication.updated_at.desc())
             .offset(offset).limit(limit)
             .options(selectinload(JobApplication.cover_letters)).all())
     _attach_dup_counts(db, rows)
     return JobListOut(items=rows, total=total, hidden_low_match=hidden)
+
+
+# ------------------------------------------------------------------ batch apply
+
+_batch_state: dict = {"running": False, "total": 0, "done": 0, "results": []}
+
+
+class BatchApplyIn(BaseModel):
+    ids: list[int]
+    auto: bool | None = None
+
+
+async def _run_batch(ids: list[int], auto: bool | None) -> None:
+    from ..services.apply_bot import open_apply
+    from ..services.cl_generator import generate_cl_checked
+    from ..services.cv_loader import get_cv_text
+
+    db: Session = SessionLocal()
+    try:
+        profile = db.get(Profile, 1)
+        effective_auto = auto if auto is not None else (
+            profile.auto_submit if profile else settings.AUTO_SUBMIT
+        )
+        _batch_state.update({"running": True, "total": len(ids), "done": 0, "results": []})
+
+        for job_id in ids:
+            entry: dict = {"id": job_id, "title": "", "ok": False,
+                           "submitted": False, "message": ""}
+            try:
+                row = db.get(JobApplication, job_id)
+                if row is None:
+                    entry["message"] = "揾唔到職位"
+                elif row.status == "applied":
+                    entry.update({"ok": True, "title": row.title, "message": "已經投咗，skip"})
+                elif row.apply_method == "external_link":
+                    entry.update({"title": row.title, "message": "外部網站，唔自動投（俾 link 你）"})
+                else:
+                    entry["title"] = row.title
+                    # ensure a CL exists (generate on the fly if possible)
+                    cl_text = ""
+                    latest = (db.query(CoverLetter).filter_by(application_id=row.id)
+                              .order_by(CoverLetter.version.desc()).first())
+                    if latest:
+                        cl_text = latest.content
+                    elif row.jd_text:
+                        try:
+                            cv_text = get_cv_text(row.jd_language)
+                            job_dict = {"title": row.title, "company": row.company,
+                                        "location": row.location, "salary_range": row.salary_range,
+                                        "jd_text": row.jd_text, "short_desc": ""}
+                            content, _w = await generate_cl_checked(
+                                cv_text, row.jd_text, job_dict, row.jd_language)
+                            cl_text = content
+                            db.add(CoverLetter(application_id=row.id, language=row.jd_language,
+                                               content=content, version=1))
+                            db.commit()
+                        except Exception as e:  # noqa: BLE001
+                            entry["message"] = f"未生成 CL：{str(e)[:120]}"
+                    result = await open_apply(row, cl_text, auto=effective_auto)
+                    entry.update({
+                        "ok": result.get("ok", False),
+                        "submitted": result.get("submitted", False),
+                        "message": result.get("message", ""),
+                    })
+                    if result.get("submitted"):
+                        row.status = "applied"
+                        row.applied_at = row.applied_at or utcnow()
+                        db.commit()
+            except Exception as e:  # noqa: BLE001
+                entry["message"] = str(e)[:200]
+            finally:
+                _batch_state["results"].append(entry)
+                _batch_state["done"] += 1
+    finally:
+        _batch_state["running"] = False
+        db.close()
+
+
+@router.post("/batch-apply")
+async def batch_apply(payload: BatchApplyIn):
+    """Apply to a whole checked list at once (background task, per-job results)."""
+    if _batch_state["running"]:
+        return {"started": False, "message": "batch 已經喺度行緊"}
+    if not payload.ids:
+        return {"started": False, "message": "冇揀到職位"}
+    asyncio.create_task(_run_batch(payload.ids, payload.auto))
+    return {"started": True, "total": len(payload.ids),
+            "message": f"開始一齊投遞 {len(payload.ids)} 份（逐份處理，可睇進度）"}
+
+
+@router.get("/batch-status")
+def batch_status():
+    return _batch_state
 
 
 @router.get("/{job_id}", response_model=JobApplicationOut)
@@ -147,6 +241,13 @@ async def refresh_job(job_id: int, db: Session = Depends(get_db)):
         except LLMError as e:
             log.warning("CL gen failed on refresh: %s", e)
 
+    if not row.job_summary and row.jd_text:
+        try:
+            from ..services.matcher import summarize_job
+            row.job_summary = await summarize_job(job_dict)
+        except LLMError as e:
+            log.warning("summary gen failed on refresh: %s", e)
+
     db.commit()
     db.refresh(row)
     return row
@@ -198,9 +299,10 @@ def email_preview(job_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="呢份工冇聯絡 email，唔可以用 email 申請")
     latest = (db.query(CoverLetter).filter_by(application_id=row.id)
               .order_by(CoverLetter.version.desc()).first())
+    from ..services.apply_bot import build_application_text
     from ..services.cv_loader import resolve_cv_path
     cv_path = resolve_cv_path("zh") or resolve_cv_path("en")
-    email = build_email(row, (latest.content if latest else ""), cv_path)
+    email = build_email(row, build_application_text(row, latest.content if latest else ""), cv_path)
     return EmailPreview(
         to=email["to"], contact_person=row.contact_person,
         subject=email["subject"], body=email["body"], attachment=email["attachment"],
