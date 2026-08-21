@@ -34,6 +34,13 @@ _COLUMN_MIGRATIONS = [
     ("profiles", "auto_submit", "BOOLEAN NOT NULL DEFAULT 1"),
     ("profiles", "intro_en", "TEXT NOT NULL DEFAULT ''"),
     ("profiles", "intro_zh", "TEXT NOT NULL DEFAULT ''"),
+    ("profiles", "offertoday_cv_en_keyword", "VARCHAR(200) NOT NULL DEFAULT ''"),
+    ("profiles", "offertoday_cv_zh_keyword", "VARCHAR(200) NOT NULL DEFAULT ''"),
+    ("profiles", "after_cv_intro_it_zh", "TEXT NOT NULL DEFAULT ''"),
+    ("profiles", "after_cv_intro_it_en", "TEXT NOT NULL DEFAULT ''"),
+    ("profiles", "after_cv_intro_general_zh", "TEXT NOT NULL DEFAULT ''"),
+    ("profiles", "after_cv_intro_general_en", "TEXT NOT NULL DEFAULT ''"),
+    ("profiles", "it_keywords", "TEXT NOT NULL DEFAULT ''"),
     ("job_applications", "dup_key", "VARCHAR(300) NOT NULL DEFAULT ''"),
     ("job_applications", "job_summary", "TEXT NOT NULL DEFAULT ''"),
 ]
@@ -59,6 +66,11 @@ def migrate() -> None:
     with engine.begin() as conn:
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_job_applications_dup_key "
                           "ON job_applications (dup_key)"))
+    # gov.hk now splits into two categories; legacy rows belong to the GBA scheme.
+    with engine.begin() as conn:
+        conn.execute(text(
+            "UPDATE job_applications SET platform='govhk_gbayes' WHERE platform='govhk'"
+        ))
 
 
 def init_db() -> None:

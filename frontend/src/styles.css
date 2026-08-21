@@ -127,6 +127,13 @@ a { color: inherit; }
 }
 .scan-status b { color: var(--ink); }
 .scan-status .err { color: var(--accent); }
+.scan-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.scan-actions .btn { flex: 1; white-space: nowrap; }
+.scan-actions .btn + .btn { flex: 0 0 auto; }
 
 /* ---------------- main ---------------- */
 .main { padding: 30px 38px 60px; max-width: 1200px; width: 100%; }
@@ -415,7 +422,9 @@ input.search:focus { border-color: var(--accent); }
 }
 .pbadge.jobsdb { border-color: #c8102e; color: #c8102e; }
 .pbadge.offertoday { border-color: var(--teal); color: var(--teal); }
-.pbadge.govhk { border-color: var(--accent); color: var(--accent-deep); }
+.pbadge.govhk,
+.pbadge.govhk_gbayes { border-color: var(--accent); color: var(--accent-deep); }
+.pbadge.govhk_it { border-color: #007fac; color: #007fac; }
 
 /* status chip */
 .status-chip {

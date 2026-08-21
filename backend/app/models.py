@@ -33,6 +33,17 @@ class Profile(Base):
     # Short self-introduction embedded in application messages/emails
     intro_en: Mapped[str] = mapped_column(Text, default="")
     intro_zh: Mapped[str] = mapped_column(Text, default="")
+    # OfferToday: filename keywords to pick the right pre-uploaded resume
+    # (override config/env; empty -> heuristic)
+    offertoday_cv_en_keyword: Mapped[str] = mapped_column(String(200), default="")
+    offertoday_cv_zh_keyword: Mapped[str] = mapped_column(String(200), default="")
+    # OfferToday: ~100-char self-intro sent AFTER the CV, per JD language x topic
+    after_cv_intro_it_zh: Mapped[str] = mapped_column(Text, default="")
+    after_cv_intro_it_en: Mapped[str] = mapped_column(Text, default="")
+    after_cv_intro_general_zh: Mapped[str] = mapped_column(Text, default="")
+    after_cv_intro_general_en: Mapped[str] = mapped_column(Text, default="")
+    # Comma-separated keywords to classify a job as IT/programming (empty = built-in defaults)
+    it_keywords: Mapped[str] = mapped_column(Text, default="")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
@@ -43,7 +54,7 @@ class JobApplication(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    platform: Mapped[str] = mapped_column(String(30))  # jobsdb | offertoday | govhk
+    platform: Mapped[str] = mapped_column(String(30))  # jobsdb | offertoday | govhk_gbayes | govhk_it
     job_id_on_platform: Mapped[str] = mapped_column(String(120))
     url: Mapped[str] = mapped_column(String(600), default="")
     external_url: Mapped[str] = mapped_column(String(600), default="")

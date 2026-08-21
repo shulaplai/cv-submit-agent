@@ -68,6 +68,9 @@ def list_jobs(status: str | None = None, platform: str | None = None, q: str = "
               show_all: bool = False, limit: int = 100, offset: int = 0,
               db: Session = Depends(get_db)):
     query = db.query(JobApplication)
+    if not settings.JOBSDB_ENABLED:
+        # JobsDB is hidden for now — keep its rows out of the board.
+        query = query.filter(JobApplication.platform != "jobsdb")
     if status:
         query = query.filter(JobApplication.status == status)
     if platform:
@@ -79,7 +82,10 @@ def list_jobs(status: str | None = None, platform: str | None = None, q: str = "
         query = query.filter(or_(JobApplication.title.like(like),
                                  JobApplication.company.like(like)))
     total = query.count()
-    hidden = db.query(JobApplication).filter(JobApplication.status == "low_match").count() if not show_all else 0
+    hidden_q = db.query(JobApplication).filter(JobApplication.status == "low_match")
+    if not settings.JOBSDB_ENABLED:
+        hidden_q = hidden_q.filter(JobApplication.platform != "jobsdb")
+    hidden = hidden_q.count() if not show_all else 0
     rows = (query.order_by(JobApplication.updated_at.desc())
             .offset(offset).limit(limit)
             .options(selectinload(JobApplication.cover_letters)).all())
@@ -178,6 +184,13 @@ async def batch_apply(payload: BatchApplyIn):
 @router.get("/batch-status")
 def batch_status():
     return _batch_state
+
+
+@router.get("/email-templates")
+def email_templates():
+    """List the email body templates the user can pick before sending."""
+    from ..services.email_templates import list_templates
+    return {"templates": list_templates()}
 
 
 @router.get("/{job_id}", response_model=JobApplicationOut)
@@ -292,17 +305,16 @@ async def regenerate_cl(job_id: int, payload: RegenerateCLLIn, db: Session = Dep
 
 
 @router.get("/{job_id}/email-preview", response_model=EmailPreview)
-def email_preview(job_id: int, db: Session = Depends(get_db)):
+def email_preview(job_id: int, template: str = "standard", db: Session = Depends(get_db)):
     """Preview the composed application email WITHOUT opening Mail."""
     row = _load(db, job_id)
     if not row.contact_email:
         raise HTTPException(status_code=400, detail="呢份工冇聯絡 email，唔可以用 email 申請")
     latest = (db.query(CoverLetter).filter_by(application_id=row.id)
               .order_by(CoverLetter.version.desc()).first())
-    from ..services.apply_bot import build_application_text
     from ..services.cv_loader import resolve_cv_path
-    cv_path = resolve_cv_path("zh") or resolve_cv_path("en")
-    email = build_email(row, build_application_text(row, latest.content if latest else ""), cv_path)
+    cv_path = resolve_cv_path(row.jd_language) or resolve_cv_path("zh" if row.jd_language == "en" else "en")
+    email = build_email(row, latest.content if latest else "", cv_path, template)
     return EmailPreview(
         to=email["to"], contact_person=row.contact_person,
         subject=email["subject"], body=email["body"], attachment=email["attachment"],
@@ -312,6 +324,7 @@ def email_preview(job_id: int, db: Session = Depends(get_db)):
 class ApplyIn(BaseModel):
     """auto=None -> follow profile/settings; True -> auto-submit; False -> manual review."""
     auto: bool | None = None
+    template: str = "standard"
 
 
 @router.post("/{job_id}/apply")
@@ -331,8 +344,9 @@ async def start_apply(job_id: int, payload: ApplyIn | None = None, db: Session =
     auto = payload.auto if (payload and payload.auto is not None) else (
         profile.auto_submit if profile else settings.AUTO_SUBMIT
     )
+    template = payload.template if (payload and payload.template) else "standard"
 
-    result = await open_apply(row, cl_text, auto=auto)
+    result = await open_apply(row, cl_text, auto=auto, template_key=template)
     if result.get("submitted"):
         row.status = "applied"
         row.applied_at = row.applied_at or utcnow()

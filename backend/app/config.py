@@ -36,13 +36,38 @@ class Settings(BaseSettings):
     # LLM budget per scan: only the top-N (by keyword pre-score) new jobs get
     # full LLM match + CL; the rest are left for backfill / manual refresh.
     MAX_ENRICH_PER_SCAN: int = 30
+    # Only keep jobs whose posting date is within this many days (2 months).
+    # Applies to EVERY platform incl. gov.hk IT category (its DD/MM/YYYY
+    # posting date is checked against the scan day). Jobs with an unknown
+    # posting date (e.g. OfferToday) are always kept. Set 0 to disable.
+    MAX_JOB_AGE_DAYS: int = 60
+    # gov.hk 大灣區青年就業計劃: posting date must be within 1 month (30 days).
+    GBAY_MAX_JOB_AGE_DAYS: int = 30
+    # gov.hk 資訊及科技界: only the first N jobs per scan (list is newest-first).
+    GOVHK_IT_MAX_JOBS: int = 50
+    # Optional global cap on total jobs kept per scan (fair-share round-robin
+    # across platforms). 0 = no global cap; per-channel caps govern.
+    MAX_SCAN_JOBS: int = 0
+    # OfferToday: each search result (資訊科技/工程師/科技) contributes at most
+    # this many drafts per scan. Set 0 for no cap.
+    OFFERTODAY_MAX_PER_SEARCH: int = 40
     GOAL_APPLICATIONS_PER_WEEK: int = 15
     GOVHK_ENABLED: bool = True
+    # JobsDB is hidden for now (semi-auto flow pending); set true to re-enable.
+    JOBSDB_ENABLED: bool = False
 
     # --- Application behavior ---
     # True = agent fills the form AND clicks submit / sends the email itself.
     # The UI (settings) and per-job manual mode can override this.
     AUTO_SUBMIT: bool = True
+
+    # --- OfferToday pre-uploaded resume picking ---
+    # OfferToday sends a resume already uploaded to the account (via the
+    # 「發履歷」 dialog). These are optional filename substrings to pick the
+    # right one per JD language; when empty, a heuristic is used
+    # (zh/chinese/中文 -> Chinese; anything else -> English).
+    OFFERTODAY_CV_EN_KEYWORD: str = ""
+    OFFERTODAY_CV_ZH_KEYWORD: str = ""
 
     # --- Browser automation ---
     # JobsDB/OfferToday automation connects to a real Chrome window via CDP.

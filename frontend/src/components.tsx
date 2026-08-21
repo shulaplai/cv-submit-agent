@@ -8,6 +8,8 @@ export function PlatformBadge({ platform }: { platform: string }) {
   const label: Record<string, string> = {
     jobsdb: "JobsDB",
     offertoday: "OfferToday",
+    govhk_gbayes: "GovHK · 大灣區計劃",
+    govhk_it: "GovHK · 資訊及科技界",
     govhk: "GovHK",
   };
   return <span className={`pbadge ${platform}`}>{label[platform] ?? platform}</span>;

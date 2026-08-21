@@ -99,6 +99,13 @@ export function Settings({ pushToast }: { pushToast: (text: string, kind?: "info
         auto_submit: p.auto_submit,
         intro_en: p.intro_en,
         intro_zh: p.intro_zh,
+        offertoday_cv_en_keyword: p.offertoday_cv_en_keyword,
+        offertoday_cv_zh_keyword: p.offertoday_cv_zh_keyword,
+        after_cv_intro_it_zh: p.after_cv_intro_it_zh,
+        after_cv_intro_it_en: p.after_cv_intro_it_en,
+        after_cv_intro_general_zh: p.after_cv_intro_general_zh,
+        after_cv_intro_general_en: p.after_cv_intro_general_en,
+        it_keywords: p.it_keywords,
       });
       setP(updated);
       setSkillsText(updated.skills_json);
@@ -149,6 +156,20 @@ export function Settings({ pushToast }: { pushToast: (text: string, kind?: "info
       if (lang === "zh") set("intro_zh", r.text);
       else set("intro_en", r.text);
       pushToast(`${lang === "zh" ? "中文" : "English"}簡介已生成，可以編輯後儲存。`, "ok");
+    } catch (e) {
+      pushToast(`生成失敗: ${(e as Error).message}`, "err");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const genAfterCvIntro = async (lang: "zh" | "en", topic: "it" | "general") => {
+    setBusy(true);
+    try {
+      const r = await api.generateAfterCvIntro(lang, topic);
+      const key = `after_cv_intro_${topic}_${lang}` as keyof Profile;
+      set(key, r.text);
+      pushToast(`已生成 ${topic === "it" ? "IT版" : "一般版"} ${lang === "zh" ? "中文" : "English"} 自我介紹。`, "ok");
     } catch (e) {
       pushToast(`生成失敗: ${(e as Error).message}`, "err");
     } finally {
@@ -242,6 +263,99 @@ export function Settings({ pushToast }: { pushToast: (text: string, kind?: "info
           </div>
           <div className="note-inline" style={{ borderStyle: "solid" }}>
             呢段簡介會加喺 Cover Letter 前面，一齊成為申請訊息／email 內文。
+          </div>
+        </div>
+        <div className="section">
+          <h4>OfferToday：已上傳 CV 檔名關鍵字（用嚟分英文／中文 CV）</h4>
+          <div className="field">
+            <label>英文 CV 檔名關鍵字（英文 JD 嘅工用）</label>
+            <input
+              value={p.offertoday_cv_en_keyword}
+              onChange={(e) => set("offertoday_cv_en_keyword", e.target.value)}
+              placeholder="例如：fullstack（留空 = 自動判斷：唔含 zh/chinese 就當英文）"
+            />
+          </div>
+          <div className="field">
+            <label>中文 CV 檔名關鍵字（中文 JD 嘅工用）</label>
+            <input
+              value={p.offertoday_cv_zh_keyword}
+              onChange={(e) => set("offertoday_cv_zh_keyword", e.target.value)}
+              placeholder="例如：zh（留空 = 自動判斷：含 zh/chinese/中文 就當中文）"
+            />
+          </div>
+        </div>
+        <div className="section">
+          <h4>發送 CV 後嘅自我介紹（OfferToday 自動投遞用，約 100 字）</h4>
+          <div className="note-inline" style={{ borderStyle: "solid" }}>
+            自動投遞會先發 CV，再自動打一段自我介紹送出。IT／程式相關工用「IT 版」，其他工用「一般版」；語言跟 JD（英文 JD 用英文，中文 JD 用中文）。留空會由 AI 即場生成，或撳下邊「AI 生成」預先生成好。
+          </div>
+          <div className="field">
+            <label>IT／程式版（中文）</label>
+            <textarea
+              rows={3}
+              value={p.after_cv_intro_it_zh}
+              onChange={(e) => set("after_cv_intro_it_zh", e.target.value)}
+              placeholder="你好，我係一位專注 IT 同程式開發嘅工程師…"
+            />
+            <div className="btnrow" style={{ marginTop: 8 }}>
+              <button className="btn" onClick={() => genAfterCvIntro("zh", "it")} disabled={busy}>
+                ✦ AI 生成 IT 版（中文）
+              </button>
+            </div>
+          </div>
+          <div className="field">
+            <label>IT／程式版（English）</label>
+            <textarea
+              rows={3}
+              value={p.after_cv_intro_it_en}
+              onChange={(e) => set("after_cv_intro_it_en", e.target.value)}
+              placeholder="Hi, I'm a software engineer focused on IT…"
+            />
+            <div className="btnrow" style={{ marginTop: 8 }}>
+              <button className="btn" onClick={() => genAfterCvIntro("en", "it")} disabled={busy}>
+                ✦ AI 生成 IT 版（English）
+              </button>
+            </div>
+          </div>
+          <div className="field">
+            <label>一般版（中文）</label>
+            <textarea
+              rows={3}
+              value={p.after_cv_intro_general_zh}
+              onChange={(e) => set("after_cv_intro_general_zh", e.target.value)}
+              placeholder="你好，我係一位工作認真、學習能力強嘅求職者…"
+            />
+            <div className="btnrow" style={{ marginTop: 8 }}>
+              <button className="btn" onClick={() => genAfterCvIntro("zh", "general")} disabled={busy}>
+                ✦ AI 生成一般版（中文）
+              </button>
+            </div>
+          </div>
+          <div className="field">
+            <label>一般版（English）</label>
+            <textarea
+              rows={3}
+              value={p.after_cv_intro_general_en}
+              onChange={(e) => set("after_cv_intro_general_en", e.target.value)}
+              placeholder="Hi, I'm a diligent and quick-learning candidate…"
+            />
+            <div className="btnrow" style={{ marginTop: 8 }}>
+              <button className="btn" onClick={() => genAfterCvIntro("en", "general")} disabled={busy}>
+                ✦ AI 生成一般版（English）
+              </button>
+            </div>
+          </div>
+        </div>
+        <div className="section">
+          <h4>IT／程式判斷關鍵字（用嚟分「IT 版」定「一般版」自我介紹）</h4>
+          <div className="field">
+            <label>關鍵字（逗號分隔；留空用預設，預設已含 AI）</label>
+            <textarea
+              rows={2}
+              value={p.it_keywords}
+              onChange={(e) => set("it_keywords", e.target.value)}
+              placeholder="ai, developer, engineer, programmer, software, frontend, backend, python, 程式, 工程師, 開發, 資訊科技, 人工智能…"
+            />
           </div>
         </div>
         <div className="field">

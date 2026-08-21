@@ -1,15 +1,21 @@
 # CV Submit Agent · 求職運作台
 
-本地運行嘅 AI 求職 Agent：自動掃描 **JobsDB、OfferToday、jobs.gov.hk（大灣區青年就業計劃）** 三個平台嘅新職位，每份工自動生成跟 JD 語言嘅 Cover Letter，半自動準備好申請（平台內預填表單 / gov.hk 用 macOS Mail 開好 Email），你 review 完自己撳提交，投完自動記錄入 Dashboard 追蹤。
+本地運行嘅 AI 求職 Agent：自動掃描 **OfferToday、jobs.gov.hk（大灣區青年就業計劃 + 資訊及科技界）** 嘅新職位（JobsDB 暫時隱藏），每份工自動生成跟 JD 語言嘅 Cover Letter，半自動準備好申請（平台內預填表單 / gov.hk 用 macOS Mail 開好 Email），你 review 完自己撳提交，投完自動記錄入 Dashboard 追蹤。
 
 目標：**每週穩定投遞 15+ 份申請**。
 
 ## 功能
 
-- 🕷️ **三個平台監控**：JobsDB（SEEK 登入 session 持久化）、OfferToday（infinite scroll）、jobs.gov.hk GBA 空缺（server-rendered，自動抽申請 email + 聯絡人）；**每 2 日夜晚 23:00 自動掃描**（`.env` 可改：`SCAN_HOUR` / `SCAN_DAY_INTERVAL`），起機唔會自動補掃
+- 🕷️ **平台監控**：OfferToday（infinite scroll）、jobs.gov.hk 兩個分類——**大灣區青年就業計劃**（`govhk_gbayes`，quickview 列表）同**資訊及科技界**（`govhk_it`，即「電腦及資訊科技」空缺類別，POST 搜尋 + joblist）；兩個都係 server-rendered，自動抽申請 email + 聯絡人，喺 Filter 分開顯示。**JobsDB 暫時隱藏**（`.env` `JOBSDB_ENABLED=false` 可重新開啟）。**每 2 日夜晚 23:00 自動掃描**（`.env` 可改：`SCAN_HOUR` / `SCAN_DAY_INTERVAL`），起機唔會自動補掃
 - ✍️ **Cover Letter 自動生成**：跟 JD 語言（英文 JD → 英文 CL；中文 JD → 繁中 CL），只可用 CV 事實（唔吹噓），UI 可編輯，每次儲存開新版本（歷史保留）；生成後自動驗證語言/長度，唔啱會重試一次
 - 🎯 **Match Score 過濾**：LLM 評分 0–100 + 理由；低分預設隱藏；**每次掃描設 LLM 預算**（預設 30 份，慳 API 錢），未處理嘅用「補齊」按鈕處理
-- 🖥️ **自動投遞（預設開）**：撳「申請」會自己填 CL + 上傳/揀 CV 並**直接撳提交**；gov.hk 用 macOS Mail **自動發送 email**（用你自己 Mail account，唔使 SMTP）。完成會自動記錄「已投遞」。
+- 📅 **新工時效過濾**：掃描時自動略過刊登日期超過期限嘅職位——**gov.hk 大灣區**（`govhk_gbayes`）限 **30 日（一個月）**，**gov.hk 資訊及科技界**（`govhk_it`）同 JobsDB 限 **60 日（兩個月）**（`DD/MM/YYYY` 刊登日期對照 scan 嗰日）；冇刊登日期嘅（如 OfferToday）照保留。**gov.hk 列表係「由近至遠」排**，一掃到過期工就即刻停成個渠道，轉去下一個渠道。設定：`.env` `GBAY_MAX_JOB_AGE_DAYS`、`MAX_JOB_AGE_DAYS`（0 = 唔過濾）
+- 🔢 **渠道上限**：**gov.hk 資訊及科技界每次頭 50 份**（`GOVHK_IT_MAX_JOBS`）；**OfferToday 每個搜索結果（資訊科技／工程師／科技）每次頭 40 份**（`OFFERTODAY_MAX_PER_SEARCH`）；全部渠道一齊入庫，入庫時同平台同 job id 已存在就自動 skip（去重）。可選總上限 `MAX_SCAN_JOBS`（0 = 冇，用各渠道自己嘅上限）
+- ⏸ **暫停掣**：scan 進行緊時撳側邊欄「⏸ 暫停」即刻中斷（平台／頁之間都檢查），**已掃到嘅內容照樣入庫**，未掃嘅平台唔會再掃，LLM 步驟（match/CL）亦會跳過，下次 scan 先補
+- 🖥️ **自動投遞（預設開）**：撳「申請」會自己填 CL + 上傳/揀 CV 並**直接撳提交**；gov.hk 用 macOS Mail **自動發送 email**（用你自己 Mail account，唔使 SMTP）。完成會自動記錄「已投遞」。Email 內文／主旨／CV 都會跟 JD 語言（中文 JD → 中文 email，英文 JD → 英文 email），而且發送前可揀 **Email 模板**（標準／簡潔／正式／直接）預覽後先發。
+  - **手動模式都預填好 CV**：切去「手動（預填後等你撳）」，agent 一樣會填 CL **加上傳/揀好 CV**，淨係唔撳提交——你喺視窗 review 完撳最後一撳就會成功交到。
+  - **OfferToday 用「發履歷」**：OfferToday 唔係上傳 file，而係撳「發履歷」→ 彈「選擇履歷」→ 按 JD 語言（英文/中文）自動揀你已上傳嘅對應 CV → 撳「發送」。CV 檔名關鍵字可喺設定頁或 `.env` 用 `OFFERTODAY_CV_EN_KEYWORD` / `OFFERTODAY_CV_ZH_KEYWORD` 覆寫。
+  - **OfferToday 發完 CV 自動補自我介紹**：發送 CV 之後自動打一段約 100 字自我介紹再送出。IT／程式相關工用「IT 版」，其他工用「一般版」，語言跟 JD。四段文字（IT 中/英、一般中/英）都喺設定頁改或撳「AI 生成」；留空會由 AI 即場生成，LLM 唔得先 fallback 模板。IT／程式判斷關鍵字（預設已含 AI）可喺設定頁改。
   - **一齊投遞**：Dashboard 剔選多份工 →「▶ 一齊自動投遞」，一次過逐份自動提交（有進度同逐份結果）；冇 CL 嘅會自動先生成。
   - **AI 職位摘要**：每份有 JD 嘅工自動生成一句睇得明嘅摘要（做咩／核心要求／薪酬／點申請），卡片直接顯示，唔使開詳情。
   - **自我簡介（AI 可生成）**：設定頁儲低中文/英文簡介，自動嵌入每份申請嘅訊息／email 內文（喺 CL 前面）；撳「✦ AI 生成簡介」由 CV 自動寫，改好先儲存。
@@ -58,7 +64,7 @@ backend/app/
   models.py          SQLite：profiles / job_applications / cover_letters
   routers/           profile · jobs · scan · stats
   services/
-    scraper_govhk.py     jobs.gov.hk（列表 + jobCard 詳情，抽 email/聯絡人）
+    scraper_govhk.py     jobs.gov.hk（大灣區計劃 quickview + 資訊及科技界 joblist，抽 email/聯絡人）
     scraper_jobsdb.py    JobsDB（SEEK data-automation selectors）
     scraper_offertoday.py OfferToday（分類頁 + infinite scroll）
     matcher.py           keyword pre-score + LLM match score（fallback）

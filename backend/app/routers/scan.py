@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..db import SessionLocal
 from ..services.scanner import ScanSummary, _backfill_candidates, _enrich_one, _fetch_detail_for, run_scan
+from ..services import scan_control
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/scan", tags=["scan"])
@@ -18,6 +19,7 @@ _state: dict = {
     "last": None,
     "last_error": None,
     "progress": {"platform": "", "phase": "", "count": 0},
+    "stop_requested": False,
 }
 
 BACKFILL_LIMIT = 10
@@ -34,9 +36,12 @@ async def _scan_job():
             "scanned": summary.scanned,
             "new_jobs": summary.new_jobs,
             "skipped_duplicates": summary.skipped_duplicates,
+            "skipped_old": summary.skipped_old,
+            "capped": summary.capped,
             "enriched": summary.enriched,
             "backfilled": summary.backfilled,
             "low_match": summary.low_match,
+            "stopped": summary.stopped,
             "errors": summary.errors,
         }
     except Exception as e:  # noqa: BLE001
@@ -44,6 +49,8 @@ async def _scan_job():
         _state["last_error"] = str(e)
     finally:
         _state["running"] = False
+        _state["stop_requested"] = False
+        scan_control.clear_stop()
         db.close()
 
 
@@ -73,10 +80,22 @@ async def _backfill_job():
 async def start_scan():
     if _state["running"]:
         return {"started": False, "message": "scan 已經喺度行緊"}
+    scan_control.clear_stop()
     _state["running"] = True
     _state["last_error"] = None
+    _state["stop_requested"] = False
     asyncio.create_task(_scan_job())
     return {"started": True, "message": "scan 已開始，請稍後查詢狀態"}
+
+
+@router.post("/stop")
+async def stop_scan():
+    """暫停掣：中斷進行中嘅 scan；已掃到嘅內容照樣入庫。"""
+    if not _state["running"]:
+        return {"stopped": False, "message": "而家冇 scan 喺度行緊"}
+    scan_control.request_stop()
+    _state["stop_requested"] = True
+    return {"stopped": True, "message": "已要求暫停——掃緊嘅部分會照入庫"}
 
 
 @router.post("/backfill")
@@ -97,4 +116,5 @@ def scan_status():
         "last_backfill": _state.get("last_backfill"),
         "progress": _state["progress"],
         "last_error": _state["last_error"],
+        "stop_requested": _state["stop_requested"],
     }

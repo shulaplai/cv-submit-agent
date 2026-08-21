@@ -17,11 +17,14 @@ router = APIRouter(prefix="/api/stats", tags=["stats"])
 def stats(db: Session = Depends(get_db)):
     now = datetime.now(timezone.utc)
 
+    base = db.query(JobApplication)
+    if not settings.JOBSDB_ENABLED:
+        base = base.filter(JobApplication.platform != "jobsdb")
     by_status = dict(
-        db.query(JobApplication.status, func.count()).group_by(JobApplication.status).all()
+        base.with_entities(JobApplication.status, func.count()).group_by(JobApplication.status).all()
     )
     by_platform = dict(
-        db.query(JobApplication.platform, func.count()).group_by(JobApplication.platform).all()
+        base.with_entities(JobApplication.platform, func.count()).group_by(JobApplication.platform).all()
     )
 
     applied_7d = (

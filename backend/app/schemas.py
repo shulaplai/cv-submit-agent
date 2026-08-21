@@ -91,6 +91,13 @@ class ProfileIn(BaseModel):
     auto_submit: Optional[bool] = None
     intro_en: Optional[str] = None
     intro_zh: Optional[str] = None
+    offertoday_cv_en_keyword: Optional[str] = None
+    offertoday_cv_zh_keyword: Optional[str] = None
+    after_cv_intro_it_zh: Optional[str] = None
+    after_cv_intro_it_en: Optional[str] = None
+    after_cv_intro_general_zh: Optional[str] = None
+    after_cv_intro_general_en: Optional[str] = None
+    it_keywords: Optional[str] = None
 
 
 class ProfileOut(BaseModel):
@@ -108,6 +115,13 @@ class ProfileOut(BaseModel):
     auto_submit: bool
     intro_en: str
     intro_zh: str
+    offertoday_cv_en_keyword: str
+    offertoday_cv_zh_keyword: str
+    after_cv_intro_it_zh: str
+    after_cv_intro_it_en: str
+    after_cv_intro_general_zh: str
+    after_cv_intro_general_en: str
+    it_keywords: str
     updated_at: datetime
 
 

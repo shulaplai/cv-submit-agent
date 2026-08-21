@@ -13,12 +13,14 @@ import {
   YAxis,
 } from "recharts";
 import { api } from "../api";
-import { STATUS_LABEL } from "../types";
+import { PLATFORM_LABEL, STATUS_LABEL } from "../types";
 import type { Stats } from "../types";
 
 const PLATFORM_COLORS: Record<string, string> = {
   jobsdb: "#c8102e",
   offertoday: "#0f6f68",
+  govhk_gbayes: "#d93b26",
+  govhk_it: "#007fac",
   govhk: "#d93b26",
 };
 
@@ -36,7 +38,8 @@ export function StatsPage() {
     value: v,
   }));
   const platformData = Object.entries(stats.by_platform).map(([k, v]) => ({
-    name: k,
+    key: k,
+    name: PLATFORM_LABEL[k] ?? k,
     value: v,
   }));
 
@@ -95,7 +98,7 @@ export function StatsPage() {
             <PieChart>
               <Pie data={platformData} dataKey="value" nameKey="name" innerRadius={55} outerRadius={85} paddingAngle={3}>
                 {platformData.map((p) => (
-                  <Cell key={p.name} fill={PLATFORM_COLORS[p.name] ?? "#625a4b"} />
+                  <Cell key={p.key} fill={PLATFORM_COLORS[p.key] ?? "#625a4b"} />
                 ))}
               </Pie>
               <Tooltip contentStyle={{ background: "#191611", color: "#f2ecdf", border: "none", borderRadius: 8, fontFamily: "var(--mono)", fontSize: 12 }} />

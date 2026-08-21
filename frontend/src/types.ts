@@ -61,14 +61,18 @@ export interface ScanStatus {
     scanned: number;
     new_jobs: number;
     skipped_duplicates: number;
+    skipped_old: number;
+    capped: number;
     enriched: number;
     backfilled: number;
     low_match: number;
+    stopped: boolean;
     errors: string[];
   } | null;
   last_backfill: { at: string; processed: number } | null;
   progress: { platform: string; phase: string; count: number };
   last_error: string | null;
+  stop_requested: boolean;
 }
 
 export interface Stats {
@@ -95,6 +99,13 @@ export interface Profile {
   auto_submit: boolean;
   intro_en: string;
   intro_zh: string;
+  offertoday_cv_en_keyword: string;
+  offertoday_cv_zh_keyword: string;
+  after_cv_intro_it_zh: string;
+  after_cv_intro_it_en: string;
+  after_cv_intro_general_zh: string;
+  after_cv_intro_general_en: string;
+  it_keywords: string;
   updated_at: string;
 }
 
@@ -121,6 +132,13 @@ export interface EmailPreview {
   attachment: string;
 }
 
+export interface EmailTemplate {
+  key: string;
+  label_zh: string;
+  label_en: string;
+  desc: string;
+}
+
 export const STATUS_LABEL: Record<Status, string> = {
   pending_review: "待處理",
   low_match: "低匹配",
@@ -135,5 +153,7 @@ export const STATUS_LABEL: Record<Status, string> = {
 export const PLATFORM_LABEL: Record<string, string> = {
   jobsdb: "JobsDB",
   offertoday: "OfferToday",
+  govhk_gbayes: "GovHK · 大灣區計劃",
+  govhk_it: "GovHK · 資訊及科技界",
   govhk: "GovHK",
 };

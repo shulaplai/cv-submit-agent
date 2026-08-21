@@ -1,4 +1,4 @@
-import type { BatchStatus, EmailPreview, Job, JobList, Profile, ScanStatus, Stats } from "./types";
+import type { BatchStatus, EmailPreview, EmailTemplate, Job, JobList, Profile, ScanStatus, Stats } from "./types";
 
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = {};
@@ -39,16 +39,17 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ instructions }),
     }),
-  apply: (id: number, auto?: boolean) =>
+  apply: (id: number, auto?: boolean, template?: string) =>
     req<{ ok: boolean; kind: string; submitted?: boolean; url?: string; to?: string; message: string; preview?: unknown }>(
       `/api/jobs/${id}/apply`,
-      { method: "POST", body: JSON.stringify({ auto }) }
+      { method: "POST", body: JSON.stringify({ auto, template }) }
     ),
   markApplied: (id: number) => req<Job>(`/api/jobs/${id}/mark-applied`, { method: "POST" }),
   updateJob: (id: number, patch: Record<string, unknown>) =>
     req<Job>(`/api/jobs/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   scanStatus: () => req<ScanStatus>("/api/scan/status"),
   startScan: () => req<{ started: boolean; message: string }>("/api/scan", { method: "POST" }),
+  stopScan: () => req<{ stopped: boolean; message: string }>("/api/scan/stop", { method: "POST" }),
   backfill: () => req<{ started: boolean; message: string }>("/api/scan/backfill", { method: "POST" }),
   stats: () => req<Stats>("/api/stats"),
   profile: () => req<Profile>("/api/profile"),
@@ -64,7 +65,15 @@ export const api = {
     fd.append("lang", lang);
     return req<{ lang: string; text: string }>("/api/profile/generate-intro", { method: "POST", body: fd });
   },
-  emailPreview: (id: number) => req<EmailPreview>(`/api/jobs/${id}/email-preview`),
+  generateAfterCvIntro: (lang: "zh" | "en", topic: "it" | "general") => {
+    const fd = new FormData();
+    fd.append("lang", lang);
+    fd.append("topic", topic);
+    return req<{ lang: string; topic: string; text: string }>("/api/profile/generate-after-cv-intro", { method: "POST", body: fd });
+  },
+  emailPreview: (id: number, template?: string) =>
+    req<EmailPreview>(`/api/jobs/${id}/email-preview${template ? `?template=${encodeURIComponent(template)}` : ""}`),
+  emailTemplates: () => req<{ templates: EmailTemplate[] }>("/api/jobs/email-templates"),
   uploadCV: (kind: "en" | "zh", file: File) => {
     const fd = new FormData();
     fd.append("kind", kind);

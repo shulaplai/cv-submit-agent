@@ -13,6 +13,7 @@ import re
 from urllib.parse import urljoin
 
 from .scraper_base import BrowserSession, JobDraft, grab_html, human_delay, open_page
+from . import scan_control
 
 log = logging.getLogger(__name__)
 
@@ -49,16 +50,29 @@ async def _scroll_search(page, target_links: int) -> None:
 
 
 async def scrape(session: BrowserSession) -> list[JobDraft]:
+    from ..config import settings
+
+    cap = settings.OFFERTODAY_MAX_PER_SEARCH
     drafts: list[JobDraft] = []
     seen: set[str] = set()
 
     for url in SEARCH_URLS:
+        if scan_control.stop_requested():
+            log.info("offertoday: stop requested before search %s", url.rsplit("/", 1)[-1])
+            return drafts
         try:
             page = await open_page(session.context, url)
-            await _scroll_search(page, 150)
+            # scroll until we have ~2x the per-search cap visible, then stop
+            await _scroll_search(page, cap * 2 if cap else 150)
             links = page.locator("a[href*='/hk/job/']")
             n = await links.count()
+            taken = 0
             for i in range(n):
+                if cap and taken >= cap:
+                    break
+                if scan_control.stop_requested():
+                    log.info("offertoday: stop requested mid-search — returning partial drafts")
+                    return drafts
                 link = links.nth(i)
                 href = await link.get_attribute("href")
                 if not href:
@@ -88,6 +102,8 @@ async def scrape(session: BrowserSession) -> list[JobDraft]:
                     jd_text="",
                     raw={"card_text": card_text[:500]},
                 ))
+                taken += 1
+            log.info("offertoday %s: took %s drafts (cap %s/search)", url.rsplit("/", 1)[-1], taken, cap)
             await page.close()
         except Exception as e:  # noqa: BLE001
             log.warning("offertoday search %s failed: %s", url, e)

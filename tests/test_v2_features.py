@@ -313,7 +313,7 @@ def test_job_summary_in_list(client, db):
 def test_cdp_unavailable_falls_back_gracefully():
     import asyncio
 
-    from app.services.cdp_browser import cdp_available, close_cdp
+    from app.services.cdp_browser import cdp_available, close_cdp, dedicated_chrome_running
 
     async def check():
         try:
@@ -322,6 +322,8 @@ def test_cdp_unavailable_falls_back_gracefully():
         finally:
             await close_cdp()
 
+    if dedicated_chrome_running():
+        pytest.skip("專用 Chrome 正在運行 — CDP 應該係可用，唔係測試目標")
     assert asyncio.run(check()) is False  # no Chrome debug port in test env
 
 

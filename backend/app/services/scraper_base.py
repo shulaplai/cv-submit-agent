@@ -139,14 +139,18 @@ async def open_page(context, url: str) -> Page:
     return page
 
 
-def is_blocked(page: Page) -> bool:
+async def is_blocked(page: Page) -> bool:
     """Best-effort detection of captcha / login-wall / WAF interstitials."""
     try:
         url = page.url.lower()
-        title = (page.title() or "").lower()
+        title = ""
+        try:
+            title = (await page.title() or "").lower()
+        except Exception:  # noqa: BLE001
+            pass
         body = ""
         try:
-            body = page.locator("body").inner_text(timeout=1500)[:2000].lower()
+            body = (await page.locator("body").inner_text(timeout=1500))[:2000].lower()
         except Exception:  # noqa: BLE001
             pass
         haystack = f"{url} {title} {body}"

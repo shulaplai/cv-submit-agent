@@ -20,15 +20,58 @@ from ..models import JobApplication
 log = logging.getLogger(__name__)
 
 
-def build_email(row: JobApplication, cl_text: str, cv_path: str) -> dict:
-    """Assemble subject/body/attachment for an email application."""
-    subject = f"應徵：{row.title}（{row.company or row.platform}）"
-    body = cl_text.strip()
-    if settings.APPLICANT_NAME:
-        body += f"\n\n{settings.APPLICANT_NAME}"
-        if settings.APPLICANT_EMAIL:
-            body += f"\n{settings.APPLICANT_EMAIL}"
-        body += "\n"
+def _email_context(row: JobApplication, cl_text: str) -> dict:
+    """Build the context passed to an email template (intro/name/email from profile)."""
+    from ..db import SessionLocal
+    from ..models import Profile
+
+    lang = getattr(row, "jd_language", "zh") or "zh"
+    intro = ""
+    name = settings.APPLICANT_NAME
+    email_addr = settings.APPLICANT_EMAIL
+    try:
+        db = SessionLocal()
+        try:
+            profile = db.get(Profile, 1)
+            if profile:
+                intro = (profile.intro_zh if lang == "zh" else profile.intro_en) or ""
+                name = profile.name or name
+                email_addr = profile.email or email_addr
+        finally:
+            db.close()
+    except Exception:  # noqa: BLE001
+        pass
+
+    return {
+        "lang": lang,
+        "contact_person": row.contact_person or "",
+        "company": row.company or "",
+        "title": row.title or "",
+        "intro": (intro or "").strip(),
+        "cl": (cl_text or "").strip(),
+        "applicant_name": name or "",
+        "applicant_email": email_addr or "",
+    }
+
+
+def build_email(row: JobApplication, cl_text: str, cv_path: str, template_key: str = "standard") -> dict:
+    """Assemble subject/body/attachment for an email application.
+
+    The subject and body follow the JD language; the body is composed from the
+    chosen template (self-intro + cover letter + signature).
+    """
+    from .email_templates import compose_body
+
+    lang = getattr(row, "jd_language", "zh") or "zh"
+    subject = (
+        f"Application for {row.title} ({row.company or row.platform})"
+        if lang == "en"
+        else f"應徵：{row.title}（{row.company or row.platform}）"
+    )
+    ctx = _email_context(row, cl_text)
+    body = compose_body(template_key, ctx)
+    if not body.strip():
+        body = cl_text.strip() or "（請喺 UI 先生成/編輯 Cover Letter）"
     return {
         "to": row.contact_email,
         "contact_person": row.contact_person,
@@ -38,23 +81,37 @@ def build_email(row: JobApplication, cl_text: str, cv_path: str) -> dict:
     }
 
 
-def _apple_escape(text: str) -> str:
-    """Escape a string for embedding inside an AppleScript string literal."""
-    return text.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+def _apple_str(text: str) -> str:
+    """Return `text` as an AppleScript string-literal EXPRESSION.
+
+    AppleScript does not interpret ``\\n``; real line breaks are produced with
+    the ``return`` constant, so newlines become ``" & return & "`` segments.
+    The result is already quoted and safe to inline (e.g. ``content:{_apple_str(body)}``).
+    """
+    escaped = (
+        text.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\r\n", "\n")
+        .replace("\r", "\n")
+    )
+    return '"' + escaped.replace("\n", '" & return & "') + '"'
+
+
+
 
 
 def compose_in_mail(email: dict) -> tuple[bool, str]:
     """Open macOS Mail with a pre-filled new message. Returns (ok, note)."""
     if not email.get("to"):
         return False, "呢份工冇聯絡 email，請睇返申請須知用其他方法申請。"
-    subj = _apple_escape(email["subject"])
-    body = _apple_escape(email["body"])
-    to = _apple_escape(email["to"])
+    subj = _apple_str(email["subject"])
+    body = _apple_str(email["body"])
+    to = _apple_str(email["to"])
     script = f"""
 tell application "Mail"
-	set newMsg to make new outgoing message with properties {{subject:"{subj}", content:"{body}"}}
+	set newMsg to make new outgoing message with properties {{subject:{subj}, content:{body}}}
 	tell newMsg
-		make new to recipient at end of to recipients with properties {{address:"{to}"}}
+		make new to recipient at end of to recipients with properties {{address:{to}}}
 	end tell
 	activate
 end tell
@@ -78,11 +135,13 @@ def attach_cv_to_draft(cv_path: str) -> tuple[bool, str]:
     p = Path(cv_path)
     if not p.exists():
         return False, f"CV 檔案不存在: {cv_path}"
-    path_esc = _apple_escape(str(p.resolve()))
+    path_str = _apple_str(str(p.resolve()))
     script = f"""
 tell application "Mail"
 	set theDraft to last outgoing message of first account
-	add content file POSIX file "{path_esc}" to theDraft
+	tell content of theDraft
+		make new attachment with properties {{file name:(POSIX file {path_str})}} at after last paragraph
+	end tell
 end tell
 """
     try:
@@ -107,7 +166,7 @@ def fallback_mailto(email: dict) -> tuple[bool, str]:
         url = f"mailto:{to}?subject={_url_quote(subject)}"
         subprocess.run(["open", url], check=False, timeout=10)
         body = email["body"]
-        script = f"set the clipboard to {_apple_quote(body)}"
+        script = f"set the clipboard to {_apple_str(body)}"
         subprocess.run(["osascript", "-e", script], check=False, timeout=10)
         return True, "已開 mailto 並複製內文到剪貼簿，請貼上內文同附上 CV 後發送。"
     except Exception as e:  # noqa: BLE001
@@ -119,23 +178,19 @@ def _url_quote(text: str) -> str:
     return urllib.parse.quote(text)
 
 
-def _apple_quote(text: str) -> str:
-    return '"' + _apple_escape(text) + '"'
-
-
-async def open_email_compose(row: JobApplication, cl_text: str, send: bool = False) -> dict:
+async def open_email_compose(row: JobApplication, cl_text: str, send: bool = False,
+                             template_key: str = "standard") -> dict:
     """Top-level entry from apply_bot: compose + open Mail (or send it).
 
     send=True -> create the message, attach CV and SEND immediately via Mail
     (uses the user's own Mail account; no SMTP credentials needed).
     send=False -> open a pre-filled draft for the user to review (semi-auto).
     """
-    from .apply_bot import build_application_text
     from .cv_loader import resolve_cv_path
 
-    cv_path = resolve_cv_path("zh") or resolve_cv_path("en")
-    text = build_application_text(row, cl_text)
-    email = build_email(row, text or "（請喺 UI 先生成/編輯 Cover Letter）", cv_path)
+    # Attach the CV matching the JD language; fall back to the other language.
+    cv_path = resolve_cv_path(row.jd_language) or resolve_cv_path("zh" if row.jd_language == "en" else "en")
+    email = build_email(row, cl_text or "（請喺 UI 先生成/編輯 Cover Letter）", cv_path, template_key)
 
     if send:
         ok, note = send_email_via_mail(email)
@@ -177,19 +232,25 @@ def send_email_via_mail(email: dict) -> tuple[bool, str]:
     """Compose + attach CV + SEND via macOS Mail. Returns (ok, note)."""
     if not email.get("to"):
         return False, "呢份工冇聯絡 email，唔可以自動發送。"
-    subj = _apple_escape(email["subject"])
-    body = _apple_escape(email["body"])
-    to = _apple_escape(email["to"])
+    subj = _apple_str(email["subject"])
+    body = _apple_str(email["body"])
+    to = _apple_str(email["to"])
     attach = ""
     if email.get("attachment") and Path(email["attachment"]).exists():
-        attach = f'\tadd content file POSIX file "{_apple_escape(str(Path(email["attachment"]).resolve()))}"\n'
+        attach = (
+            f"\ttell content of newMsg\n"
+            f"\t\tmake new attachment with properties "
+            f'{{file name:(POSIX file {_apple_str(str(Path(email["attachment"]).resolve()))})}} '
+            f"at after last paragraph\n"
+            f"\tend tell\n"
+        )
     script = f"""
 tell application "Mail"
-	set newMsg to make new outgoing message with properties {{subject:"{subj}", content:"{body}"}}
+	set newMsg to make new outgoing message with properties {{subject:{subj}, content:{body}}}
 	tell newMsg
-		make new to recipient at end of to recipients with properties {{address:"{to}"}}
-{attach}\tend tell
-\tsend newMsg
+		make new to recipient at end of to recipients with properties {{address:{to}}}
+	end tell
+{attach}\tsend newMsg
 end tell
 """
     try:

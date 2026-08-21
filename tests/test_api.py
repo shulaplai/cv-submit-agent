@@ -75,7 +75,7 @@ def test_stats(client, seed_job):
 def test_low_match_hidden_by_default(client, db):
     from app.models import JobApplication
 
-    row = JobApplication(platform="jobsdb", job_id_on_platform="999999",
+    row = JobApplication(platform="offertoday", job_id_on_platform="999999",
                          title="低分工", status="low_match", match_score=20)
     db.add(row)
     db.commit()
@@ -88,7 +88,64 @@ def test_low_match_hidden_by_default(client, db):
     assert any(j["title"] == "低分工" for j in r.json()["items"])
 
 
+def test_jobsdb_hidden_by_default(client, db):
+    from app.models import JobApplication
+
+    row = JobApplication(platform="jobsdb", job_id_on_platform="998877",
+                         title="JobsDB 職位", status="pending_review", match_score=80)
+    db.add(row)
+    db.commit()
+
+    r = client.get("/api/jobs")
+    assert not any(j["title"] == "JobsDB 職位" for j in r.json()["items"])
+
+    r = client.get("/api/jobs?show_all=true")
+    assert not any(j["title"] == "JobsDB 職位" for j in r.json()["items"])
+
+
 def test_scan_status(client):
     r = client.get("/api/scan/status")
     assert r.status_code == 200
     assert r.json()["running"] in (True, False)
+
+
+def test_scan_stop_endpoint_when_idle(client):
+    """暫停掣：冇 scan 行緊時撳暫停 -> 有禮貌嘅錯誤回應，唔 crash。"""
+    r = client.post("/api/scan/stop")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["stopped"] is False
+    assert "冇 scan" in body["message"]
+
+
+def test_scan_stop_endpoint_while_running(client, monkeypatch):
+    """行緊時撳暫停 -> 設定 stop flag，狀態有 stop_requested。"""
+    from app.services import scan_control
+
+    async def fake_run_scan(db, progress):
+        scan_control.request_stop()
+        from app.services.scanner import ScanSummary
+        s = ScanSummary(stopped=True, scanned=1)
+        return s
+
+    from app.routers import scan as scan_router
+
+    monkeypatch.setattr(scan_router, "run_scan", fake_run_scan)
+    scan_control.clear_stop()
+
+    # start the scan (background task)
+    r = client.post("/api/scan")
+    assert r.json()["started"] is True
+
+    # wait a moment for the background task to finish, then check status
+    import time
+    for _ in range(50):
+        status = client.get("/api/scan/status").json()
+        if not status["running"]:
+            break
+        time.sleep(0.05)
+
+    status = client.get("/api/scan/status").json()
+    assert status["last"] is not None
+    assert status["last"]["stopped"] is True
+    assert status["stop_requested"] is False  # cleared after scan ends

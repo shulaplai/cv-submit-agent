@@ -121,6 +121,7 @@ def test_send_email_via_mail_failure_falls_to_draft(monkeypatch, tmp_path):
         platform = "govhk"
         contact_email = "hr@example.com"
         contact_person = "陳先生"
+        jd_language = "zh"
 
     calls = {"n": 0}
 

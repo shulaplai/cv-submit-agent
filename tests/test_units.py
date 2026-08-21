@@ -2,7 +2,7 @@
 import re
 
 from app.services import matcher
-from app.services.email_bot import _apple_escape, build_email
+from app.services.email_bot import _apple_str, build_email
 from app.services.language import detect_language
 from app.services.llm import _parse_json
 
@@ -38,19 +38,53 @@ def test_build_email():
         platform = "govhk"
         contact_email = "hr@example.com"
         contact_person = "陳先生"
+        jd_language = "zh"
 
     email = build_email(FakeRow(), "你好，我係求職者。", "/tmp/cv.pdf")
     assert email["to"] == "hr@example.com"
     assert "AI 工程師" in email["subject"]
     assert "測試公司" in email["subject"]
-    assert email["body"].startswith("你好，我係求職者。")
+    assert "你好，我係求職者。" in email["body"]
     assert email["attachment"].endswith("cv.pdf")  # /tmp resolves to /private/tmp on macOS
 
 
-def test_apple_escape():
-    s = _apple_escape('he said "hi"\nnew line')
-    assert '\\"' in s
-    assert "\\n" in s
+def test_build_email_subject_follows_language():
+    class FakeRow:
+        title = "Frontend Developer"
+        company = "ABC Ltd"
+        platform = "govhk"
+        contact_email = "hr@example.com"
+        contact_person = ""
+        jd_language = "en"
+
+    email = build_email(FakeRow(), "Dear Hiring Manager, ...", "/tmp/cv.pdf")
+    assert email["subject"].startswith("Application for")
+    assert "Frontend Developer" in email["subject"]
+
+
+def test_email_templates_compose():
+    from app.services.email_templates import compose_body, list_templates
+
+    keys = [t["key"] for t in list_templates()]
+    assert keys == ["standard", "concise", "formal", "direct"]
+
+    ctx = {"lang": "zh", "contact_person": "陳先生", "intro": "我係全端工程師。",
+           "cl": "求職信內文", "applicant_name": "陳大文", "applicant_email": "a@b.com"}
+    zh = compose_body("standard", ctx)
+    assert "陳先生 您好" in zh and "求職信內文" in zh and "陳大文" in zh
+
+    en = compose_body("standard", {**ctx, "lang": "en", "contact_person": "Mr Chan"})
+    assert en.startswith("Dear Mr Chan,")
+
+    assert "我係全端工程師" not in compose_body("concise", ctx)  # concise skips intro
+    assert "敬啟者" in compose_body("formal", ctx)
+
+
+def test_apple_str():
+    s = _apple_str('he said "hi"\nnew line')
+    assert '\\"' in s          # double quote escaped
+    assert "& return &" in s   # newline -> AppleScript return constant
+    assert s.startswith('"') and s.endswith('"')
 
 
 def test_store_dedup(db):

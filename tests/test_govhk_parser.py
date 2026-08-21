@@ -4,6 +4,7 @@ from pathlib import Path
 from app.services.scraper_govhk import (
     extract_email_and_person,
     parse_detail_html,
+    parse_joblist_html,
     parse_list_html,
     title_matches_keywords,
 )
@@ -21,6 +22,20 @@ def test_parse_list_html():
     assert "18,000" in first["salary_range"]
     assert first["location"] == "深圳"
     assert first["detail_url"].startswith("https://www2.jobs.gov.hk/0/tc/jobseeker/jobCard/?order=")
+
+
+def test_parse_joblist_html():
+    """資訊及科技界 search-result table parser (live joblist fixture)."""
+    html = (FIXTURES / "govhk_joblist_it.html").read_text(encoding="utf-8")
+    items = parse_joblist_html(html)
+    assert len(items) == 20
+    first = items[0]
+    assert first["job_id"] == "31-26-0005281"
+    assert first["title"] == "資訊科技支援技術員(EA)"
+    assert first["location"] == "上水"
+    assert first["salary_range"].startswith("$15,000")
+    assert first["detail_url"].startswith("https://www2.jobs.gov.hk/0/tc/jobseeker/jobCard/?order=")
+    assert "from=joblist" in first["detail_url"]
 
 
 def test_title_keyword_filter():

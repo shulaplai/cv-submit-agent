@@ -51,6 +51,16 @@ export default function App() {
     }
   }, [pushToast, refreshScan]);
 
+  const stopScan = useCallback(async () => {
+    try {
+      const r = await api.stopScan();
+      pushToast(r.message || "已要求暫停", "info");
+      setTimeout(refreshScan, 1000);
+    } catch (e) {
+      pushToast(`暫停失敗: ${(e as Error).message}`, "err");
+    }
+  }, [pushToast, refreshScan]);
+
   const nav = [
     { id: "dashboard" as View, label: "職位台", idx: "01" },
     { id: "history" as View, label: "投遞檔案", idx: "02" },
@@ -81,7 +91,7 @@ export default function App() {
           <div className="scan-status">
             {scan?.running ? (
               <>
-                ▣ 掃描進行中
+                ▣ 掃描進行中{scan.stop_requested ? "（暫停請求已送出…）" : ""}
                 {scan.progress?.platform && (
                   <>
                     <br />
@@ -92,9 +102,27 @@ export default function App() {
             ) : scan?.last ? (
               <>
                 上次掃描 <b>{fmtDate(scan.last.at)}</b>
+                {scan.last.stopped && (
+                  <>
+                    {" "}
+                    <span className="err">（已暫停）</span>
+                  </>
+                )}
                 <br />
                 新職位 <b>{scan.last.new_jobs}</b> · 重複 {scan.last.skipped_duplicates} · 掃到{" "}
                 {scan.last.scanned}
+                {scan.last.skipped_old > 0 && (
+                  <>
+                    <br />
+                    過期（超過兩個月）已略過 {scan.last.skipped_old} 份
+                  </>
+                )}
+                {scan.last.capped > 0 && (
+                  <>
+                    <br />
+                    上限 50 份，另有 {scan.last.capped} 份等下次 scan
+                  </>
+                )}
                 {scan.last.backfilled > 0 && (
                   <>
                     <br />
@@ -112,9 +140,19 @@ export default function App() {
               <>未掃描過</>
             )}
           </div>
-          <button className="btn ink" onClick={startScan} disabled={scan?.running}>
-            {scan?.running ? "掃描中…" : "▶ 立即掃描"}
-          </button>
+          <div className="scan-actions">
+            <button className="btn ink" onClick={startScan} disabled={scan?.running}>
+              {scan?.running ? "掃描中…" : "▶ 立即掃描"}
+            </button>
+            <button
+              className="btn"
+              onClick={stopScan}
+              disabled={!scan?.running || scan?.stop_requested}
+              title="中斷 scan；已掃到嘅內容照樣入庫"
+            >
+              ⏸ 暫停
+            </button>
+          </div>
         </div>
       </aside>
 

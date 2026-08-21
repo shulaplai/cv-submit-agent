@@ -16,6 +16,7 @@ import re
 from urllib.parse import urljoin
 
 from .scraper_base import BrowserSession, JobDraft, grab_html, human_delay, open_page
+from . import scan_control
 
 log = logging.getLogger(__name__)
 
@@ -62,6 +63,9 @@ async def scrape(session: BrowserSession, keywords: list[str] | None = None) -> 
     for kw in kws:
         if not kw:
             continue
+        if scan_control.stop_requested():
+            log.info("jobsdb: stop requested before search '%s'", kw)
+            return drafts
         url = f"{SEARCH_URL}?keywords={kw}&location=Hong%20Kong"
         try:
             page = await open_page(session.context, url)
@@ -69,6 +73,9 @@ async def scrape(session: BrowserSession, keywords: list[str] | None = None) -> 
             cards = page.locator("[data-testid='job-card']")
             n = await cards.count()
             for i in range(n):
+                if scan_control.stop_requested():
+                    log.info("jobsdb: stop requested mid-search — returning partial drafts")
+                    return drafts
                 card = cards.nth(i)
                 link = card.locator("[data-automation='job-list-view-job-link']")
                 href = await link.get_attribute("href") if await link.count() else None

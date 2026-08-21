@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { Modal, PlatformBadge, StatusChip, fmtDate } from "../components";
-import type { EmailPreview, Job } from "../types";
+import type { EmailPreview, EmailTemplate, Job } from "../types";
 
 interface ApplyResult {
   ok: boolean;
@@ -31,6 +31,8 @@ export function JobDetail({
   const [note, setNote] = useState<{ text: string; kind: string } | null>(null);
   const [applyResult, setApplyResult] = useState<ApplyResult | null>(null);
   const [emailDraft, setEmailDraft] = useState<EmailPreview | null>(null);
+  const [templates, setTemplates] = useState<EmailTemplate[]>([]);
+  const [templateKey, setTemplateKey] = useState("standard");
   const [notes, setNotes] = useState(job.notes);
   const [stage, setStage] = useState(job.interview_stage);
 
@@ -136,11 +138,11 @@ export function JobDetail({
     }
   };
 
-  // email flow: step 1 = preview, step 2 = confirm -> open Mail / auto-send
-  const startEmailApply = async () => {
+  // email flow: step 1 = preview (choose template), step 2 = confirm -> open Mail / auto-send
+  const loadEmailPreview = async (key: string) => {
     setBusy(true);
     try {
-      const draft = await api.emailPreview(job.id);
+      const draft = await api.emailPreview(job.id, key);
       setEmailDraft(draft);
     } catch (e) {
       showNote(`預覽失敗: ${(e as Error).message}`, "err");
@@ -149,10 +151,31 @@ export function JobDetail({
     }
   };
 
+  const startEmailApply = async () => {
+    setBusy(true);
+    try {
+      if (!templates.length) {
+        const t = await api.emailTemplates();
+        setTemplates(t.templates);
+      }
+      const draft = await api.emailPreview(job.id, templateKey);
+      setEmailDraft(draft);
+    } catch (e) {
+      showNote(`預覽失敗: ${(e as Error).message}`, "err");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const changeTemplate = async (key: string) => {
+    setTemplateKey(key);
+    await loadEmailPreview(key);
+  };
+
   const confirmEmailApply = async () => {
     setBusy(true);
     try {
-      const r = await api.apply(job.id, effectiveAuto);
+      const r = await api.apply(job.id, effectiveAuto, templateKey);
       setApplyResult(r as ApplyResult);
       setEmailDraft(null);
       showNote(r.message, r.ok ? (r.submitted ? "ok" : "info") : "err");
@@ -192,7 +215,7 @@ export function JobDetail({
     }
   };
 
-  const isGBA = job.platform === "govhk";
+  const isGBA = job.platform === "govhk" || job.platform === "govhk_gbayes";
   const applyBtnLabel =
     job.apply_method === "email"
       ? "✉ Email 申請"
@@ -346,6 +369,24 @@ export function JobDetail({
             <div style={{ fontWeight: 600, marginBottom: 6 }}>
               Email 預覽 — {effectiveAuto ? "確認後會自動發送" : "確認後會開 Mail draft 俾你手動發送"}
             </div>
+            {templates.length > 0 && (
+              <div style={{ marginBottom: 8 }}>
+                <label style={{ fontSize: 12, marginRight: 6 }}>模板：</label>
+                <select
+                  value={templateKey}
+                  onChange={(e) => changeTemplate(e.target.value)}
+                  style={{ maxWidth: 220 }}
+                  title={templates.find((t) => t.key === templateKey)?.desc}
+                >
+                  {templates.map((t) => (
+                    <option key={t.key} value={t.key}>
+                      {job.jd_language === "en" ? t.label_en : t.label_zh}
+                      {t.key === "standard" ? "（預設）" : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div style={{ whiteSpace: "pre-wrap", fontSize: 12.5 }}>
               <b>收件人：</b>
               {emailDraft.to}

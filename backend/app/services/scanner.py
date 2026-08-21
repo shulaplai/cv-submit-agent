@@ -23,14 +23,23 @@ from .llm import LLMError
 from .matcher import keyword_score, score_job
 from .scraper_base import get_browser
 from .store import persist_drafts
+from .jobdate import is_fresh
+from . import scan_control
 
 log = logging.getLogger(__name__)
 
-PLATFORM_SCRAPERS = (
-    ("govhk", scraper_govhk.scrape, None),
-    ("jobsdb", scraper_jobsdb.scrape, scraper_jobsdb.fetch_detail),
-    ("offertoday", scraper_offertoday.scrape, scraper_offertoday.fetch_detail),
-)
+def _platform_scrapers() -> tuple:
+    """Enabled scrapers, in scan order. JobsDB is gated by JOBSDB_ENABLED."""
+    scrapers: list[tuple] = []
+    if settings.GOVHK_ENABLED:
+        scrapers.append(("govhk", scraper_govhk.scrape, None))
+    if settings.JOBSDB_ENABLED:
+        scrapers.append(("jobsdb", scraper_jobsdb.scrape, scraper_jobsdb.fetch_detail))
+    scrapers.append(("offertoday", scraper_offertoday.scrape, scraper_offertoday.fetch_detail))
+    return tuple(scrapers)
+
+
+PLATFORM_SCRAPERS = _platform_scrapers()
 
 _WS_RE = re.compile(r"\s+")
 
@@ -45,14 +54,23 @@ class ScanSummary:
     scanned: int = 0
     new_jobs: int = 0
     skipped_duplicates: int = 0
+    skipped_old: int = 0
+    capped: int = 0
     enriched: int = 0
     backfilled: int = 0
     low_match: int = 0
+    stopped: bool = False
     errors: list[str] = field(default_factory=list)
 
 
 async def run_scan(db: Session, progress: dict | None = None) -> ScanSummary:
-    """Full scan. `progress` is a shared dict mutated in place for live UI updates."""
+    """Full scan. `progress` is a shared dict mutated in place for live UI updates.
+
+    Polls ``scan_control.stop_requested()`` between platforms (and between
+    pages inside the scrapers). When a stop is requested the platform loop
+    breaks immediately, but drafts already scraped ARE still persisted — the
+    user's 暫停 button must not lose the work done so far.
+    """
     summary = ScanSummary()
     all_drafts = []
 
@@ -63,6 +81,10 @@ async def run_scan(db: Session, progress: dict | None = None) -> ScanSummary:
     for platform, scrape_fn, _ in PLATFORM_SCRAPERS:
         if platform == "govhk" and not settings.GOVHK_ENABLED:
             continue
+        if scan_control.stop_requested():
+            log.info("scan stop requested — breaking before platform %s", platform)
+            summary.stopped = True
+            break
         try:
             set_progress(platform, "scraping", 0)
             session = await get_browser(platform)
@@ -73,55 +95,96 @@ async def run_scan(db: Session, progress: dict | None = None) -> ScanSummary:
         except Exception as e:  # noqa: BLE001
             log.exception("scan failed for %s", platform)
             summary.errors.append(f"{platform}: {e}")
+        if scan_control.stop_requested():
+            log.info("scan stop requested — stopping after platform %s", platform)
+            summary.stopped = True
+            break
+
+    # freshness filter: drop jobs posted more than MAX_JOB_AGE_DAYS ago
+    max_age = settings.MAX_JOB_AGE_DAYS
+    if max_age > 0:
+        kept: list = []
+        for d in all_drafts:
+            if is_fresh(d.posted_at, max_age):
+                kept.append(d)
+            else:
+                summary.skipped_old += 1
+                log.info("dropping stale job %s/%s (posted %r, >%sd old)",
+                         d.platform, d.job_id, d.posted_at, max_age)
+        all_drafts = kept
+
+    # per-scan cap: at most MAX_SCAN_JOBS drafts total, fair-share across
+    # platforms (round-robin) so one platform can't crowd out the others
+    max_jobs = settings.MAX_SCAN_JOBS
+    if max_jobs > 0 and len(all_drafts) > max_jobs:
+        buckets: dict[str, list] = {}
+        for d in all_drafts:
+            buckets.setdefault(d.platform, []).append(d)
+        capped: list = []
+        while len(capped) < max_jobs and buckets:
+            for pf in list(buckets):
+                if buckets[pf]:
+                    capped.append(buckets[pf].pop(0))
+                if not buckets[pf]:
+                    del buckets[pf]
+                if len(capped) >= max_jobs:
+                    break
+        summary.capped = len(all_drafts) - len(capped)
+        log.info("per-scan cap %s: kept %s of %s drafts (round-robin)",
+                 max_jobs, len(capped), len(all_drafts) + summary.capped)
+        all_drafts = capped
 
     new_count, dup_count, new_rows = persist_drafts(db, all_drafts)
     summary.new_jobs = new_count
     summary.skipped_duplicates = dup_count
 
     # ---- LLM budget allocation -----------------------------------------
-    budget = settings.MAX_ENRICH_PER_SCAN
-    candidates: list[JobApplication] = []
-    if new_rows:
-        # new rows: prioritize by keyword pre-score (cheap, no LLM)
-        skills = load_skills()
-        scored = []
-        for row in new_rows:
-            pre = keyword_score(row.title, row.jd_text, skills)
-            row.match_score = pre  # provisional; LLM re-scores if enriched
-            scored.append((pre, row))
-        scored.sort(key=lambda x: x[0], reverse=True)
-        candidates = [r for _, r in scored]
-        summary.low_match = sum(1 for s, r in scored if s < settings.MATCH_THRESHOLD)
+    # When a stop was requested, the drafts scraped so far are already
+    # persisted above; skip the (expensive, LLM-heavy) enrich phase entirely.
+    if not summary.stopped:
+        budget = settings.MAX_ENRICH_PER_SCAN
+        candidates: list[JobApplication] = []
+        if new_rows:
+            # new rows: prioritize by keyword pre-score (cheap, no LLM)
+            skills = load_skills()
+            scored = []
+            for row in new_rows:
+                pre = keyword_score(row.title, row.jd_text, skills)
+                row.match_score = pre  # provisional; LLM re-scores if enriched
+                scored.append((pre, row))
+            scored.sort(key=lambda x: x[0], reverse=True)
+            candidates = [r for _, r in scored]
+            summary.low_match = sum(1 for s, r in scored if s < settings.MATCH_THRESHOLD)
 
-    # backfill: oldest un-enriched rows when budget remains
-    backfill_rows: list[JobApplication] = []
-    if budget > 0:
-        backfill_rows = _backfill_candidates(db, budget)
-        summary.backfilled = len(backfill_rows)
+        # backfill: oldest un-enriched rows when budget remains
+        backfill_rows: list[JobApplication] = []
+        if budget > 0:
+            backfill_rows = _backfill_candidates(db, budget)
+            summary.backfilled = len(backfill_rows)
 
-    tasks = []
-    sem = asyncio.Semaphore(6)
+        tasks = []
+        sem = asyncio.Semaphore(6)
 
-    async def enrich(row: JobApplication, platform: str, fetch_detail, kind: str) -> None:
-        async with sem:
-            try:
-                set_progress(platform, f"enriching ({kind})", row.title[:40])
-                await _enrich_one(db, row, platform, fetch_detail, load_skills())
-                summary.enriched += 1
-                if row.status == "low_match":
-                    summary.low_match += 1
-            except Exception as e:  # noqa: BLE001
-                log.exception("enrich failed for %s/%s", platform, row.job_id_on_platform)
-                summary.errors.append(f"{platform}/{row.job_id_on_platform}: {e}")
+        async def enrich(row: JobApplication, platform: str, fetch_detail, kind: str) -> None:
+            async with sem:
+                try:
+                    set_progress(platform, f"enriching ({kind})", row.title[:40])
+                    await _enrich_one(db, row, platform, fetch_detail, load_skills())
+                    summary.enriched += 1
+                    if row.status == "low_match":
+                        summary.low_match += 1
+                except Exception as e:  # noqa: BLE001
+                    log.exception("enrich failed for %s/%s", platform, row.job_id_on_platform)
+                    summary.errors.append(f"{platform}/{row.job_id_on_platform}: {e}")
 
-    for row in candidates[: max(0, budget)]:
-        tasks.append(enrich(row, row.platform, _fetch_detail_for(row.platform), "new"))
-    remaining = max(0, budget - len(candidates[:budget]))
-    for row in backfill_rows[:remaining]:
-        tasks.append(enrich(row, row.platform, _fetch_detail_for(row.platform), "backfill"))
+        for row in candidates[: max(0, budget)]:
+            tasks.append(enrich(row, row.platform, _fetch_detail_for(row.platform), "new"))
+        remaining = max(0, budget - len(candidates[:budget]))
+        for row in backfill_rows[:remaining]:
+            tasks.append(enrich(row, row.platform, _fetch_detail_for(row.platform), "backfill"))
 
-    if tasks:
-        await asyncio.gather(*tasks)
+        if tasks:
+            await asyncio.gather(*tasks)
 
     set_progress("", "done", 0)
     db.commit()

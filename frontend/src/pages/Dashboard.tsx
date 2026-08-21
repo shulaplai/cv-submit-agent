@@ -174,9 +174,9 @@ export function Dashboard({
           style={{ appearance: "auto" }}
         >
           <option value="">所有平台</option>
-          <option value="jobsdb">JobsDB</option>
           <option value="offertoday">OfferToday</option>
-          <option value="govhk">GovHK</option>
+          <option value="govhk_gbayes">GovHK · 大灣區計劃</option>
+          <option value="govhk_it">GovHK · 資訊及科技界</option>
         </select>
         <input
           className="search"

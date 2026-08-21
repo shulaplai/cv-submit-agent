@@ -139,3 +139,22 @@ async def generate_intro(lang: str = Form("zh")):
         return {"lang": lang, "text": text.strip()}
     except llm_svc.LLMError as e:
         raise HTTPException(status_code=502, detail=f"生成失敗：{e}")
+
+
+@router.post("/generate-after-cv-intro")
+async def generate_after_cv_intro(lang: str = Form("zh"), topic: str = Form("it")):
+    """AI-write the ~100-char self-intro sent AFTER the CV (OfferToday).
+
+    topic: 'it' (IT/programming) or 'general'. Returns text for review/editing.
+    """
+    if lang not in ("zh", "en"):
+        raise HTTPException(status_code=400, detail="lang 必須係 zh 或 en")
+    if topic not in ("it", "general"):
+        raise HTTPException(status_code=400, detail="topic 必須係 it 或 general")
+    from ..services.apply_bot import generate_after_cv_intro as _gen
+
+    try:
+        text = await _gen(lang, topic == "it")
+        return {"lang": lang, "topic": topic, "text": text}
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"生成失敗：{e}")
