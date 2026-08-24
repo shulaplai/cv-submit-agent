@@ -13,9 +13,10 @@ from __future__ import annotations
 
 import logging
 import re
-from urllib.parse import urljoin
+from urllib.parse import quote, urljoin
 
-from .scraper_base import BrowserSession, JobDraft, grab_html, human_delay, open_page
+from .classify import TrackConfig, classify, title_matches
+from .scraper_base import BrowserSession, JobDraft, human_delay, open_page
 from . import scan_control
 
 log = logging.getLogger(__name__)
@@ -24,18 +25,6 @@ BASE = "https://hk.jobsdb.com"
 SEARCH_URL = f"{BASE}/jobs"
 MAX_KEYWORDS = 4          # cap concurrent searches per scan
 JOBS_PER_SEARCH = 60      # scroll a bit past first page (30/card page)
-
-TITLE_KEYWORDS = (
-    "ai", "agent", "developer", "programmer", "engineer", "frontend",
-    "backend", "full stack", "full-stack", "software", "python", "javascript",
-    "typescript", "llm", "machine learning", "ml ", "data", "資訊科技",
-    "工程師", "程式", "系統", "軟件", "前端", "後端", "人工智能",
-)
-
-
-def title_matches_keywords(title: str) -> bool:
-    low = title.lower()
-    return any(k in low for k in TITLE_KEYWORDS)
 
 
 def _job_id_from_url(url: str) -> str:
@@ -53,10 +42,18 @@ async def _scroll_search(page, target_links: int) -> None:
         await human_delay(0.8, 1.6)
 
 
-async def scrape(session: BrowserSession, keywords: list[str] | None = None) -> list[JobDraft]:
-    from ..config import settings
+async def scrape(session: BrowserSession, track: str = "it",
+                 cfg: TrackConfig | None = None) -> list[JobDraft]:
+    """JobsDB search per track.
 
-    kws = (keywords or settings.keywords)[:MAX_KEYWORDS]
+    The track keywords become the search terms; results are filtered by the
+    same keywords (IT track: keep matching titles; general track: keep titles
+    matching the general keywords and not IT-classified). Capped at
+    ``cfg.govhk_max_jobs`` per scan (reused slot; JobsDB is hidden by default).
+    """
+    cfg = cfg or TrackConfig.defaults(track)
+    kws = (cfg.keywords or cfg.it_keywords)[:MAX_KEYWORDS]
+    cap = JOBS_PER_SEARCH  # jobsdb has no per-track cap column yet (hidden by default)
     drafts: list[JobDraft] = []
     seen: set[str] = set()
 
@@ -66,13 +63,15 @@ async def scrape(session: BrowserSession, keywords: list[str] | None = None) -> 
         if scan_control.stop_requested():
             log.info("jobsdb: stop requested before search '%s'", kw)
             return drafts
-        url = f"{SEARCH_URL}?keywords={kw}&location=Hong%20Kong"
+        url = f"{SEARCH_URL}?keywords={quote(kw)}&location=Hong%20Kong"
         try:
             page = await open_page(session.context, url)
             await _scroll_search(page, JOBS_PER_SEARCH)
             cards = page.locator("[data-testid='job-card']")
             n = await cards.count()
             for i in range(n):
+                if len(drafts) >= cap:
+                    break
                 if scan_control.stop_requested():
                     log.info("jobsdb: stop requested mid-search — returning partial drafts")
                     return drafts
@@ -86,8 +85,15 @@ async def scrape(session: BrowserSession, keywords: list[str] | None = None) -> 
                     continue
                 seen.add(job_id)
                 title = await _text(card, "[data-automation='jobTitle']")
-                if not title_matches_keywords(title):
-                    continue
+                if track == "it":
+                    if not title_matches(title, cfg.keywords):
+                        continue
+                    category = "it"
+                else:
+                    if classify(title, cfg.it_keywords) != "general" \
+                       or not title_matches(title, cfg.keywords):
+                        continue
+                    category = "general"
                 drafts.append(JobDraft(
                     platform="jobsdb",
                     job_id=job_id,
@@ -97,6 +103,7 @@ async def scrape(session: BrowserSession, keywords: list[str] | None = None) -> 
                     location=await _text(card, "[data-automation='jobLocation']"),
                     posted_at=await _text(card, "[data-automation='jobListingDate']"),
                     jd_text="",  # detail fetched on demand (see jobs router refresh)
+                    category=category,
                     raw={"short_desc": await _text(card, "[data-automation='jobShortDescription']")},
                 ))
             await page.close()

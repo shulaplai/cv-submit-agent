@@ -278,6 +278,35 @@ a { color: inherit; }
 .batch-bar .goalbar { background: rgba(242, 236, 223, 0.2); min-width: 160px; }
 .batch-bar .goalbar-fill { background: var(--accent); }
 
+/* ---------------- track tabs (IT / 一般) ---------------- */
+.track-tabs {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 12px;
+}
+.track-tab {
+  font-family: var(--sans);
+  font-size: 14px;
+  letter-spacing: 0.02em;
+  padding: 8px 18px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.track-tab b { font-family: var(--mono); }
+.track-tab:hover { border-color: var(--ink); color: var(--ink); }
+.track-tab.active {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--paper-3);
+}
+.track-tab.active b { color: var(--accent); }
+
 /* ---------------- filter bar ---------------- */
 .filterbar {
   display: flex;
@@ -425,6 +454,73 @@ input.search:focus { border-color: var(--accent); }
 .pbadge.govhk,
 .pbadge.govhk_gbayes { border-color: var(--accent); color: var(--accent-deep); }
 .pbadge.govhk_it { border-color: #007fac; color: #007fac; }
+.pbadge.govhk_general { border-color: #6b8f4e; color: #4a6b33; }
+
+/* ---------------- settings: scan caps grid ---------------- */
+.cap-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+  margin-top: 6px;
+}
+.cap-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12.5px;
+  color: var(--ink-soft);
+}
+.cap-grid input {
+  font-family: var(--mono);
+  font-size: 13px;
+  padding: 7px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--paper-2);
+  color: var(--ink);
+  max-width: 140px;
+}
+.scan-track-select { font-size: 11.5px; }
+.scan-kw {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+  background: var(--paper-2);
+}
+.scan-kw label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+.scan-kw input {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  padding: 5px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+/* ---------------- pagination ---------------- */
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.pager-info { font-size: 12.5px; color: var(--ink-soft); font-family: var(--mono); }
+.pager-btns { display: flex; align-items: center; gap: 8px; }
 
 /* status chip */
 .status-chip {

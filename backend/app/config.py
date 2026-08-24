@@ -36,17 +36,22 @@ class Settings(BaseSettings):
     # LLM budget per scan: only the top-N (by keyword pre-score) new jobs get
     # full LLM match + CL; the rest are left for backfill / manual refresh.
     MAX_ENRICH_PER_SCAN: int = 30
+    # Every scan ALSO fetches the full JD for every new row (no LLM) plus up to
+    # this many oldest rows still missing a JD (detail-only backfill), so the
+    # whole board gradually carries a description. Set 0 to disable.
+    DETAIL_BACKFILL_PER_SCAN: int = 20
     # Only keep jobs whose posting date is within this many days (2 months).
     # Applies to EVERY platform incl. gov.hk IT category (its DD/MM/YYYY
     # posting date is checked against the scan day). Jobs with an unknown
-    # posting date (e.g. OfferToday) are always kept. Set 0 to disable.
+    # posting date (e.g. OfferToday list cards) are always kept. Set 0 to disable.
     MAX_JOB_AGE_DAYS: int = 60
     # gov.hk 大灣區青年就業計劃: posting date must be within 1 month (30 days).
     GBAY_MAX_JOB_AGE_DAYS: int = 30
     # gov.hk 資訊及科技界: only the first N jobs per scan (list is newest-first).
     GOVHK_IT_MAX_JOBS: int = 50
-    # Optional global cap on total jobs kept per scan (fair-share round-robin
-    # across platforms). 0 = no global cap; per-channel caps govern.
+    # Optional global cap on total jobs kept per scan, per track
+    # (fair-share round-robin across platforms within the track).
+    # 0 = no global cap; per-channel caps govern.
     MAX_SCAN_JOBS: int = 0
     # OfferToday: each search result (資訊科技/工程師/科技) contributes at most
     # this many drafts per scan. Set 0 for no cap.
@@ -55,6 +60,28 @@ class Settings(BaseSettings):
     GOVHK_ENABLED: bool = True
     # JobsDB is hidden for now (semi-auto flow pending); set true to re-enable.
     JOBSDB_ENABLED: bool = False
+
+    # --- Job tracks: IT vs 一般 (non-IT) ---
+    # A scan can cover both tracks (default) or one of them (track toggle on
+    # the sidebar / POST /api/scan {track: it|general}). The toggles below are
+    # the defaults; the Settings page can override them per-user.
+    IT_TRACK_ENABLED: bool = True
+    GENERAL_TRACK_ENABLED: bool = True
+    # Non-IT track: jobs whose title matches any of these keywords are kept on
+    # the 一般 page (IT-classified jobs are always excluded there). Empty ->
+    # built-in defaults (文員/行政助理/客戶服務/…).
+    GENERAL_JOB_KEYWORDS: str = ""
+    # gov.hk 一般 track: the main quickview (ALL vacancy categories, newest
+    # first) filtered by the general keywords; at most N jobs per scan.
+    GOVHK_GENERAL_MAX_JOBS: int = 20
+    # OfferToday 一般 track: keyword searches (<kw>-jobs); at most this many
+    # drafts per keyword search, and at most OFFERTODAY_GENERAL_MAX_SEARCHES
+    # keyword searches per scan.
+    OFFERTODAY_GENERAL_MAX_PER_SEARCH: int = 15
+    OFFERTODAY_GENERAL_MAX_SEARCHES: int = 8
+    # Comma-separated override of the OfferToday general-track search terms
+    # (each becomes one search page). Empty -> use the general keywords.
+    OFFERTODAY_GENERAL_SEARCH_TERMS: str = ""
 
     # --- Application behavior ---
     # True = agent fills the form AND clicks submit / sends the email itself.

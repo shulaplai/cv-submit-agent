@@ -45,10 +45,17 @@ def test_parse_unknown_or_empty():
     assert parse_posted_date("成為最早的申請者") is None
 
 
+def test_parse_offertoday_jsonld_iso():
+    # OfferToday detail pages now expose datePosted as ISO yyyy-mm-dd
+    assert parse_posted_date("2026-08-05") == date(2026, 8, 5)
+    assert is_fresh("2026-08-05", 60) is True
+    assert is_fresh("2026-01-05", 60) is False
+
+
 def test_is_fresh_keeps_recent_and_unknown():
     assert is_fresh("1d ago", 60) is True
     assert is_fresh("11/08/2026", 60) is True
-    # OfferToday has no posting date -> kept
+    # OfferToday list cards have no posting date yet -> kept
     assert is_fresh("", 60) is True
     assert is_fresh("成為最早的申請者", 60) is True
 
@@ -81,7 +88,7 @@ def test_run_scan_filters_stale_drafts(db, monkeypatch):
     unknown = JobDraft(platform="offertoday", job_id="tok",
                        title="AI Developer", posted_at="")
 
-    async def fake_scrape(session):
+    async def fake_scrape(session, track="it", cfg=None):
         return [fresh, stale, unknown]
 
     async def fake_get_browser(platform):
@@ -91,7 +98,7 @@ def test_run_scan_filters_stale_drafts(db, monkeypatch):
                         (("govhk", fake_scrape, None),))
     monkeypatch.setattr(scanner, "get_browser", fake_get_browser)
 
-    summary = asyncio.run(scanner.run_scan(db, {}))
+    summary = asyncio.run(scanner.run_scan(db, {}, track="it"))
     assert summary.skipped_old == 1
     assert summary.scanned == 3
 
@@ -117,7 +124,7 @@ def test_run_scan_caps_at_max_jobs_fair_share(db, monkeypatch):
     ot = [JobDraft(platform="offertoday", job_id=f"tok{i}",
                    title="AI Developer", posted_at="") for i in range(3)]
 
-    async def fake_scrape(session):
+    async def fake_scrape(session, track="it", cfg=None):
         return gov + ot
 
     async def fake_get_browser(platform):
@@ -127,7 +134,7 @@ def test_run_scan_caps_at_max_jobs_fair_share(db, monkeypatch):
                         (("govhk", fake_scrape, None),))
     monkeypatch.setattr(scanner, "get_browser", fake_get_browser)
 
-    summary = asyncio.run(scanner.run_scan(db, {}))
+    summary = asyncio.run(scanner.run_scan(db, {}, track="it"))
     assert summary.capped == 3  # 6 drafts -> 3 kept
     assert summary.new_jobs == 3
 
@@ -148,7 +155,7 @@ def test_run_scan_cap_disabled_when_zero(db, monkeypatch):
     drafts = [JobDraft(platform="govhk", job_id=f"11-26-00003{i:02d}",
                        title="AI 工程師", posted_at="01/08/2026") for i in range(4)]
 
-    async def fake_scrape(session):
+    async def fake_scrape(session, track="it", cfg=None):
         return drafts
 
     async def fake_get_browser(platform):
@@ -158,7 +165,7 @@ def test_run_scan_cap_disabled_when_zero(db, monkeypatch):
                         (("govhk", fake_scrape, None),))
     monkeypatch.setattr(scanner, "get_browser", fake_get_browser)
 
-    summary = asyncio.run(scanner.run_scan(db, {}))
+    summary = asyncio.run(scanner.run_scan(db, {}, track="it"))
     assert summary.capped == 0
     assert summary.new_jobs == 4
 
@@ -179,7 +186,7 @@ def test_run_scan_stop_persists_scraped_drafts(db, monkeypatch):
     second = JobDraft(platform="govhk", job_id="11-26-0000402",
                       title="AI 工程師", posted_at="01/08/2026")
 
-    async def fake_scrape(session):
+    async def fake_scrape(session, track="it", cfg=None):
         scan_control.request_stop()  # stop requested DURING scraping
         return [first, second]
 
@@ -191,7 +198,7 @@ def test_run_scan_stop_persists_scraped_drafts(db, monkeypatch):
     monkeypatch.setattr(scanner, "get_browser", fake_get_browser)
     scan_control.clear_stop()
 
-    summary = asyncio.run(scanner.run_scan(db, {}))
+    summary = asyncio.run(scanner.run_scan(db, {}, track="it"))
     assert summary.stopped is True
     assert summary.scanned == 2
     assert summary.enriched == 0  # LLM phase skipped on stop
@@ -214,18 +221,18 @@ def test_run_scan_stop_between_platforms(db, monkeypatch):
     called = {"n": 0}
     state = {"stop": False}
 
-    async def scrape_a(session):
+    async def scrape_a(session, track="it", cfg=None):
         called["n"] += 1
         state["stop"] = True  # request stop right after platform A completes
         return [JobDraft(platform="govhk", job_id="11-26-0000501",
                          title="AI 工程師", posted_at="01/08/2026")]
 
-    async def scrape_b(session):
+    async def scrape_b(session, track="it", cfg=None):
         called["n"] += 1
         return [JobDraft(platform="offertoday", job_id="tokB",
                          title="AI Developer", posted_at="")]
 
-    async def scrape_c(session):
+    async def scrape_c(session, track="it", cfg=None):
         called["n"] += 1
         return []
 
@@ -241,7 +248,7 @@ def test_run_scan_stop_between_platforms(db, monkeypatch):
                         lambda: state["stop"])
     scan_control.clear_stop()
 
-    summary = asyncio.run(scanner.run_scan(db, {}))
+    summary = asyncio.run(scanner.run_scan(db, {}, track="it"))
     assert summary.stopped is True
     assert called["n"] == 1  # only platform A ran
 
@@ -289,7 +296,7 @@ def test_gbayes_stops_at_stale(monkeypatch):
     async def fake_grab_html(page):
         return fixture
 
-    async def fake_fetch_detail(session, item, platform):
+    async def fake_fetch_detail(session, item, platform, category=""):
         fetch_count["n"] += 1
         # first match (資訊科技工程師) is stale -> channel must stop
         return JobDraft(platform=platform, job_id=item["job_id"],
@@ -337,7 +344,7 @@ def test_gbayes_keeps_scanning_while_fresh(monkeypatch):
     async def fake_grab_html(page):
         return fixture
 
-    async def fake_fetch_detail(session, item, platform):
+    async def fake_fetch_detail(session, item, platform, category=""):
         return JobDraft(platform=platform, job_id=item["job_id"],
                         title=item["title"], posted_at="01/08/2026")
 
@@ -387,7 +394,7 @@ def test_govhk_it_caps_at_50(monkeypatch):
     class FakeSession:
         context = type("Ctx", (), {"request": FakeRequest()})()
 
-    async def fake_fetch_detail(session, item, platform):
+    async def fake_fetch_detail(session, item, platform, category=""):
         return JobDraft(platform=platform, job_id=item["job_id"],
                         title=item["title"], posted_at="01/08/2026")
 

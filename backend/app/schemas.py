@@ -22,6 +22,7 @@ class JobApplicationOut(BaseModel):
     id: int
     platform: str
     job_id_on_platform: str
+    category: str = "it"
     url: str
     external_url: str
     title: str
@@ -98,6 +99,14 @@ class ProfileIn(BaseModel):
     after_cv_intro_general_zh: Optional[str] = None
     after_cv_intro_general_en: Optional[str] = None
     it_keywords: Optional[str] = None
+    it_track_enabled: Optional[bool] = None
+    general_track_enabled: Optional[bool] = None
+    general_job_keywords: Optional[str] = None
+    offertoday_general_search_terms: Optional[str] = None
+    govhk_it_max_jobs: Optional[int] = None
+    govhk_general_max_jobs: Optional[int] = None
+    offertoday_it_max_per_search: Optional[int] = None
+    offertoday_general_max_per_search: Optional[int] = None
 
 
 class ProfileOut(BaseModel):
@@ -122,6 +131,14 @@ class ProfileOut(BaseModel):
     after_cv_intro_general_zh: str
     after_cv_intro_general_en: str
     it_keywords: str
+    it_track_enabled: bool
+    general_track_enabled: bool
+    general_job_keywords: str
+    offertoday_general_search_terms: str
+    govhk_it_max_jobs: int
+    govhk_general_max_jobs: int
+    offertoday_it_max_per_search: int
+    offertoday_general_max_per_search: int
     updated_at: datetime
 
 

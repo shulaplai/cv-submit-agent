@@ -122,7 +122,7 @@ def test_scan_stop_endpoint_while_running(client, monkeypatch):
     """行緊時撳暫停 -> 設定 stop flag，狀態有 stop_requested。"""
     from app.services import scan_control
 
-    async def fake_run_scan(db, progress):
+    async def fake_run_scan(db, progress, track=None):
         scan_control.request_stop()
         from app.services.scanner import ScanSummary
         s = ScanSummary(stopped=True, scanned=1)
@@ -149,3 +149,105 @@ def test_scan_stop_endpoint_while_running(client, monkeypatch):
     assert status["last"] is not None
     assert status["last"]["stopped"] is True
     assert status["stop_requested"] is False  # cleared after scan ends
+
+
+# ------------------------------------------------------------ track / category
+
+def test_jobs_list_category_filter(client, db):
+    """GET /api/jobs?category=... filters the board; legacy rows default to it."""
+    from app.models import JobApplication
+
+    it_row = JobApplication(platform="offertoday", job_id_on_platform="tokIT",
+                            title="AI Developer", category="it", status="pending_review")
+    gen_row = JobApplication(platform="offertoday", job_id_on_platform="tokGEN",
+                             title="文員", category="general", status="pending_review")
+    db.add_all([it_row, gen_row])
+    db.commit()
+
+    r = client.get("/api/jobs?category=it")
+    titles = {j["title"] for j in r.json()["items"]}
+    assert titles == {"AI Developer"}
+
+    r = client.get("/api/jobs?category=general")
+    titles = {j["title"] for j in r.json()["items"]}
+    assert titles == {"文員"}
+
+    r = client.get("/api/jobs")  # no filter -> both
+    titles = {j["title"] for j in r.json()["items"]}
+    assert titles == {"AI Developer", "文員"}
+
+
+def test_scan_start_accepts_track_and_rejects_bad(client, monkeypatch):
+    from app.routers import scan as scan_router
+    from app.services.scanner import ScanSummary
+
+    seen_track = {}
+
+    async def fake_run_scan(db, progress, track=None):
+        seen_track["track"] = track
+        return ScanSummary()
+
+    monkeypatch.setattr(scan_router, "run_scan", fake_run_scan)
+
+    r = client.post("/api/scan", json={"track": "general"})
+    assert r.json()["started"] is True
+
+    r = client.post("/api/scan", json={"track": "bogus"})
+    assert r.status_code == 400
+
+    import time
+    for _ in range(50):
+        status = client.get("/api/scan/status").json()
+        if not status["running"]:
+            break
+        time.sleep(0.05)
+    assert seen_track.get("track") == "general"
+    assert status["last"]["track"] == "general"
+
+
+def test_profile_track_settings_roundtrip(client):
+    r = client.put("/api/profile", json={
+        "it_track_enabled": True,
+        "general_track_enabled": False,
+        "general_job_keywords": "文員,接待員",
+        "govhk_it_max_jobs": 30,
+        "offertoday_general_max_per_search": 8,
+    })
+    assert r.status_code == 200
+    body = r.json()
+    assert body["general_track_enabled"] is False
+    assert body["general_job_keywords"] == "文員,接待員"
+    assert body["govhk_it_max_jobs"] == 30
+    assert body["offertoday_general_max_per_search"] == 8
+
+
+def test_jobs_list_sort_and_added_date_filter(client, db):
+    """sort=created newest-first; added_from/added_to filter on 入庫日期."""
+    from datetime import datetime, timedelta, timezone
+
+    from app.models import JobApplication
+
+    now = datetime.now(timezone.utc)
+    r1 = JobApplication(platform="offertoday", job_id_on_platform="A", title="A 工",
+                        status="pending_review", created_at=now - timedelta(days=5))
+    r2 = JobApplication(platform="offertoday", job_id_on_platform="B", title="B 工",
+                        status="pending_review", created_at=now - timedelta(days=2))
+    r3 = JobApplication(platform="offertoday", job_id_on_platform="C", title="C 工",
+                        status="pending_review", created_at=now - timedelta(days=30))
+    db.add_all([r1, r2, r3])
+    db.commit()
+
+    r = client.get("/api/jobs?sort=created&limit=10")
+    titles = [j["title"] for j in r.json()["items"]]
+    assert titles == ["B 工", "A 工", "C 工"]  # newest 入庫 first
+
+    # 入庫日期 range: 7 日前至今日 -> only A + B
+    from_d = (now - timedelta(days=7)).date().isoformat()
+    to_d = now.date().isoformat()
+    r = client.get(f"/api/jobs?added_from={from_d}&added_to={to_d}&limit=10")
+    titles = {j["title"] for j in r.json()["items"]}
+    assert titles == {"A 工", "B 工"}
+
+    # bad date -> 400
+    r = client.get("/api/jobs?added_from=notadate")
+    assert r.status_code == 400

@@ -21,6 +21,7 @@ const PLATFORM_COLORS: Record<string, string> = {
   offertoday: "#0f6f68",
   govhk_gbayes: "#d93b26",
   govhk_it: "#007fac",
+  govhk_general: "#6b8f4e",
   govhk: "#d93b26",
 };
 

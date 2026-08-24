@@ -41,9 +41,28 @@ _COLUMN_MIGRATIONS = [
     ("profiles", "after_cv_intro_general_zh", "TEXT NOT NULL DEFAULT ''"),
     ("profiles", "after_cv_intro_general_en", "TEXT NOT NULL DEFAULT ''"),
     ("profiles", "it_keywords", "TEXT NOT NULL DEFAULT ''"),
+    ("profiles", "it_track_enabled", "BOOLEAN NOT NULL DEFAULT 1"),
+    ("profiles", "general_track_enabled", "BOOLEAN NOT NULL DEFAULT 1"),
+    ("profiles", "general_job_keywords", "TEXT NOT NULL DEFAULT ''"),
+    ("profiles", "offertoday_general_search_terms", "TEXT NOT NULL DEFAULT ''"),
+    ("profiles", "govhk_it_max_jobs", "INTEGER NOT NULL DEFAULT 0"),
+    ("profiles", "govhk_general_max_jobs", "INTEGER NOT NULL DEFAULT 0"),
+    ("profiles", "offertoday_it_max_per_search", "INTEGER NOT NULL DEFAULT 0"),
+    ("profiles", "offertoday_general_max_per_search", "INTEGER NOT NULL DEFAULT 0"),
     ("job_applications", "dup_key", "VARCHAR(300) NOT NULL DEFAULT ''"),
     ("job_applications", "job_summary", "TEXT NOT NULL DEFAULT ''"),
+    ("job_applications", "category", "VARCHAR(10) NOT NULL DEFAULT 'it'"),
 ]
+
+# Seed per-source scan caps from .env into the (single) profile row when the
+# column is still 0 — 0 means "use the .env default". Runs every boot; values
+# the user edits in the Settings page are never overwritten.
+_CAP_SEEDS = {
+    "govhk_it_max_jobs": "GOVHK_IT_MAX_JOBS",
+    "govhk_general_max_jobs": "GOVHK_GENERAL_MAX_JOBS",
+    "offertoday_it_max_per_search": "OFFERTODAY_MAX_PER_SEARCH",
+    "offertoday_general_max_per_search": "OFFERTODAY_GENERAL_MAX_PER_SEARCH",
+}
 
 
 def _table_columns(table: str) -> set[str]:
@@ -66,11 +85,50 @@ def migrate() -> None:
     with engine.begin() as conn:
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_job_applications_dup_key "
                           "ON job_applications (dup_key)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_job_applications_category "
+                          "ON job_applications (category)"))
     # gov.hk now splits into two categories; legacy rows belong to the GBA scheme.
     with engine.begin() as conn:
         conn.execute(text(
             "UPDATE job_applications SET platform='govhk_gbayes' WHERE platform='govhk'"
         ))
+    # seed per-source scan caps into the profile row (0 = use .env default)
+    for col, env_name in _CAP_SEEDS.items():
+        env_val = getattr(settings, env_name, 0)
+        with engine.begin() as conn:
+            conn.execute(text(
+                f"UPDATE profiles SET {col}=:val WHERE {col}=0"
+            ), {"val": int(env_val)})
+    _backfill_categories()
+
+
+def _backfill_categories() -> None:
+    """One-time (idempotent) pass: tag rows by title classification.
+
+    New rows carry their track category at insert time; this re-tags legacy
+    rows (which defaulted to 'it') so the IT / 一般 board split is accurate.
+    Deterministic, so running it every boot is harmless.
+    """
+    from .services.classify import classify, resolve_it_keywords
+
+    try:
+        from .models import JobApplication
+    except Exception:  # noqa: BLE001
+        return
+    it_kws = resolve_it_keywords()
+    db = SessionLocal()
+    try:
+        changed = 0
+        for row in db.query(JobApplication).all():
+            cat = classify(row.title or "", it_kws)
+            if cat != row.category:
+                row.category = cat
+                changed += 1
+        if changed:
+            db.commit()
+            log.info("category backfill: re-tagged %s legacy rows", changed)
+    finally:
+        db.close()
 
 
 def init_db() -> None:

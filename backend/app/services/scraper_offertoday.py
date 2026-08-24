@@ -1,23 +1,28 @@
 """OfferToday (HK direct-hire platform) scraper — server-rendered MUI pages.
 
 List: /hk/search/jobs-<category>/<code>  (infinite scroll; verified live)
-  category codes: 資訊科技=118000, 工程師=112000, 科技=127000
+  IT track category codes: 資訊科技=118000, 工程師=112000, 科技=127000
+  一般 track keyword search: /hk/search/<keyword>-jobs  (verified live)
   card links: a[href*='/hk/job/']
 Detail: /hk/job/<base64-token>  — job id = the token itself.
+  Publish date: the detail page embeds JSON-LD (schema.org JobPosting) with a
+  ``datePosted`` field (ISO yyyy-mm-dd) — extracted as the posting date.
 Apply flow: click #J_apply (opens message + CV form, may require login).
 """
 from __future__ import annotations
 
 import logging
 import re
-from urllib.parse import urljoin
+from urllib.parse import quote, urljoin
 
-from .scraper_base import BrowserSession, JobDraft, grab_html, human_delay, open_page
+from .classify import TrackConfig, classify, title_matches
+from .scraper_base import BrowserSession, JobDraft, human_delay, open_page
 from . import scan_control
 
 log = logging.getLogger(__name__)
 
 BASE = "https://www.offertoday.com"
+# IT track: verified category pages.
 SEARCH_URLS = (
     f"{BASE}/hk/search/jobs-%E8%B3%87%E8%A8%8A%E7%A7%91%E6%8A%80/118000",  # 資訊科技
     f"{BASE}/hk/search/jobs-%E5%B7%A5%E7%A8%8B%E5%B8%AB/112000",          # 工程師
@@ -25,18 +30,17 @@ SEARCH_URLS = (
 )
 MAX_SCROLLS = 12
 SALARY_RE = re.compile(r"(?:HK\s*\$|HK\$)?\s*\$?[\d,]+(?:K|M)?\s*(?:-\s*\$?[\d,]+(?:K|M)?)?\s*/?(?:月|小時|日)?")
-
-TITLE_KEYWORDS = (
-    "ai", "agent", "developer", "programmer", "engineer", "frontend",
-    "backend", "full stack", "full-stack", "software", "python", "javascript",
-    "typescript", "llm", "machine learning", "data", "資訊科技", "工程師",
-    "程式", "系統", "軟件", "前端", "後端", "人工智能", "技術員", "it ",
-)
+# JSON-LD jobPosting on the detail page: {"datePosted": "2026-08-05", ...}
+DATEPOSTED_RE = re.compile(r'"datePosted"\s*:\s*"(\d{4}-\d{2}-\d{2})"')
 
 
-def title_matches_keywords(title: str) -> bool:
-    low = title.lower()
-    return any(k in low for k in TITLE_KEYWORDS)
+def _search_urls_for(cfg: TrackConfig) -> list[str]:
+    """Per-track search URLs: IT uses the category pages; general uses keyword
+    searches (at most cfg.max_searches of them)."""
+    if cfg.name == "it":
+        return list(SEARCH_URLS)
+    terms = (cfg.offertoday_search_terms or cfg.keywords)[: cfg.max_searches or len(cfg.keywords)]
+    return [f"{BASE}/hk/search/{quote(term)}-jobs" for term in terms]
 
 
 async def _scroll_search(page, target_links: int) -> None:
@@ -49,20 +53,27 @@ async def _scroll_search(page, target_links: int) -> None:
         await human_delay(0.6, 1.4)
 
 
-async def scrape(session: BrowserSession) -> list[JobDraft]:
-    from ..config import settings
+async def scrape(session: BrowserSession, track: str = "it",
+                 cfg: TrackConfig | None = None) -> list[JobDraft]:
+    """Scrape the OfferToday search pages for one job track.
 
-    cap = settings.OFFERTODAY_MAX_PER_SEARCH
+    IT track: the three tech category pages, keeping keyword-matching titles.
+    general track: one search page per keyword term, keeping titles that match
+    the general keywords and are NOT IT-classified.
+    Each search page contributes at most cfg.offertoday_max_per_search drafts.
+    """
+    cfg = cfg or TrackConfig.defaults(track)
     drafts: list[JobDraft] = []
     seen: set[str] = set()
 
-    for url in SEARCH_URLS:
+    for url in _search_urls_for(cfg):
         if scan_control.stop_requested():
             log.info("offertoday: stop requested before search %s", url.rsplit("/", 1)[-1])
             return drafts
         try:
             page = await open_page(session.context, url)
             # scroll until we have ~2x the per-search cap visible, then stop
+            cap = cfg.offertoday_max_per_search
             await _scroll_search(page, cap * 2 if cap else 150)
             links = page.locator("a[href*='/hk/job/']")
             n = await links.count()
@@ -81,8 +92,15 @@ async def scrape(session: BrowserSession) -> list[JobDraft]:
                 if not token or token in seen:
                     continue
                 title = (await link.inner_text()).strip()
-                if not title_matches_keywords(title):
-                    continue
+                if track == "it":
+                    if not title_matches(title, cfg.keywords):
+                        continue
+                    category = "it"
+                else:
+                    if classify(title, cfg.it_keywords) != "general" \
+                       or not title_matches(title, cfg.keywords):
+                        continue
+                    category = "general"
                 seen.add(token)
                 card_text = (await link.evaluate(
                     "el => { let p = el; for (let i=0;i<3 && p.parentElement;i++) p = p.parentElement; return p.innerText; }"
@@ -100,10 +118,12 @@ async def scrape(session: BrowserSession) -> list[JobDraft]:
                     location="",
                     salary_range=salary,
                     jd_text="",
+                    category=category,
                     raw={"card_text": card_text[:500]},
                 ))
                 taken += 1
-            log.info("offertoday %s: took %s drafts (cap %s/search)", url.rsplit("/", 1)[-1], taken, cap)
+            log.info("offertoday %s: took %s drafts (cap %s/search)",
+                     url.rsplit("/", 1)[-1], taken, cap)
             await page.close()
         except Exception as e:  # noqa: BLE001
             log.warning("offertoday search %s failed: %s", url, e)
@@ -113,11 +133,20 @@ async def scrape(session: BrowserSession) -> list[JobDraft]:
 
 
 async def fetch_detail(session: BrowserSession, draft: JobDraft) -> JobDraft:
-    """Fetch full JD for an OfferToday job (called on demand)."""
+    """Fetch full JD for an OfferToday job (called on demand).
+
+    Also extracts the publish date from the embedded JSON-LD (datePosted),
+    so OfferToday jobs finally carry a posting date for the freshness filter.
+    """
     try:
         page = await open_page(session.context, draft.url)
+        html = await page.content()
         text = await page.locator("body").inner_text()
         lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+
+        m = DATEPOSTED_RE.search(html)
+        if m:
+            draft.posted_at = m.group(1)
 
         # company: line just after the title (format "公司·行業")
         if draft.title in lines:

@@ -21,6 +21,7 @@ export interface Job {
   id: number;
   platform: string;
   job_id_on_platform: string;
+  category: "it" | "general";
   url: string;
   external_url: string;
   title: string;
@@ -66,13 +67,17 @@ export interface ScanStatus {
     enriched: number;
     backfilled: number;
     low_match: number;
+    details_fetched: number;
     stopped: boolean;
     errors: string[];
+    track: string;
+    tracks: Record<string, { scanned: number; new_jobs: number; skipped_old: number; capped: number }>;
   } | null;
   last_backfill: { at: string; processed: number } | null;
   progress: { platform: string; phase: string; count: number };
   last_error: string | null;
   stop_requested: boolean;
+  track: string | null;
 }
 
 export interface Stats {
@@ -106,6 +111,14 @@ export interface Profile {
   after_cv_intro_general_zh: string;
   after_cv_intro_general_en: string;
   it_keywords: string;
+  it_track_enabled: boolean;
+  general_track_enabled: boolean;
+  general_job_keywords: string;
+  offertoday_general_search_terms: string;
+  govhk_it_max_jobs: number;
+  govhk_general_max_jobs: number;
+  offertoday_it_max_per_search: number;
+  offertoday_general_max_per_search: number;
   updated_at: string;
 }
 
@@ -155,5 +168,11 @@ export const PLATFORM_LABEL: Record<string, string> = {
   offertoday: "OfferToday",
   govhk_gbayes: "GovHK · 大灣區計劃",
   govhk_it: "GovHK · 資訊及科技界",
+  govhk_general: "GovHK · 一般職位",
   govhk: "GovHK",
+};
+
+export const CATEGORY_LABEL: Record<string, string> = {
+  it: "IT 職位",
+  general: "一般職位",
 };

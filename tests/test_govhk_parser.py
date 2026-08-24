@@ -1,12 +1,12 @@
 """Parser tests for jobs.gov.hk using captured live HTML fixtures."""
 from pathlib import Path
 
+from app.services.classify import DEFAULT_IT_KEYWORDS, title_matches
 from app.services.scraper_govhk import (
     extract_email_and_person,
     parse_detail_html,
     parse_joblist_html,
     parse_list_html,
-    title_matches_keywords,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -39,9 +39,10 @@ def test_parse_joblist_html():
 
 
 def test_title_keyword_filter():
-    assert title_matches_keywords("資訊科技工程師")
-    assert title_matches_keywords("AI基礎架構主任/高級主任")
-    assert not title_matches_keywords("行政秘書")
+    """Shared IT-keyword matcher drives the gbayes title filter."""
+    assert title_matches("資訊科技工程師", DEFAULT_IT_KEYWORDS)
+    assert title_matches("AI基礎架構主任/高級主任", DEFAULT_IT_KEYWORDS)
+    assert not title_matches("行政秘書", DEFAULT_IT_KEYWORDS)
 
 
 def test_parse_detail_html():

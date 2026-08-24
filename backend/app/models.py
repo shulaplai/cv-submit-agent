@@ -44,6 +44,18 @@ class Profile(Base):
     after_cv_intro_general_en: Mapped[str] = mapped_column(Text, default="")
     # Comma-separated keywords to classify a job as IT/programming (empty = built-in defaults)
     it_keywords: Mapped[str] = mapped_column(Text, default="")
+    # ---- Job-track settings (IT vs 一般), editable in the Settings page ----
+    it_track_enabled: Mapped[bool] = mapped_column(default=True)
+    general_track_enabled: Mapped[bool] = mapped_column(default=True)
+    # Non-IT track keywords (empty = .env GENERAL_JOB_KEYWORDS or built-ins)
+    general_job_keywords: Mapped[str] = mapped_column(Text, default="")
+    # OfferToday general track: comma-separated search terms (empty = general keywords)
+    offertoday_general_search_terms: Mapped[str] = mapped_column(Text, default="")
+    # Per-source scan caps per track (0 = .env default at profile creation)
+    govhk_it_max_jobs: Mapped[int] = mapped_column(Integer, default=0)
+    govhk_general_max_jobs: Mapped[int] = mapped_column(Integer, default=0)
+    offertoday_it_max_per_search: Mapped[int] = mapped_column(Integer, default=0)
+    offertoday_general_max_per_search: Mapped[int] = mapped_column(Integer, default=0)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
@@ -54,8 +66,9 @@ class JobApplication(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    platform: Mapped[str] = mapped_column(String(30))  # jobsdb | offertoday | govhk_gbayes | govhk_it
+    platform: Mapped[str] = mapped_column(String(30))  # jobsdb | offertoday | govhk_gbayes | govhk_it | govhk_general
     job_id_on_platform: Mapped[str] = mapped_column(String(120))
+    category: Mapped[str] = mapped_column(String(10), default="it")  # it | general (職位台分頁)
     url: Mapped[str] = mapped_column(String(600), default="")
     external_url: Mapped[str] = mapped_column(String(600), default="")
     title: Mapped[str] = mapped_column(String(300), default="")

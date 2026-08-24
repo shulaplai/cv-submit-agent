@@ -48,7 +48,11 @@ export const api = {
   updateJob: (id: number, patch: Record<string, unknown>) =>
     req<Job>(`/api/jobs/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   scanStatus: () => req<ScanStatus>("/api/scan/status"),
-  startScan: () => req<{ started: boolean; message: string }>("/api/scan", { method: "POST" }),
+  startScan: (track?: "all" | "it" | "general") =>
+    req<{ started: boolean; message: string }>("/api/scan", {
+      method: "POST",
+      body: JSON.stringify({ track: track || "all" }),
+    }),
   stopScan: () => req<{ stopped: boolean; message: string }>("/api/scan/stop", { method: "POST" }),
   backfill: () => req<{ started: boolean; message: string }>("/api/scan/backfill", { method: "POST" }),
   stats: () => req<Stats>("/api/stats"),

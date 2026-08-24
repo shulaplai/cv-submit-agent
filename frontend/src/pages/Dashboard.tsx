@@ -14,8 +14,33 @@ export function Dashboard({
   const [data, setData] = useState<JobList>({ items: [], total: 0, hidden_low_match: 0 });
   const [status, setStatus] = useState("");
   const [platform, setPlatform] = useState("");
+  const [category, setCategory] = useState<"it" | "general" | "">("it");
   const [q, setQ] = useState("");
   const [showAll, setShowAll] = useState(false);
+  const [sort, setSort] = useState("updated");
+  const [addedFrom, setAddedFrom] = useState("");
+  const [addedTo, setAddedTo] = useState("");
+  const [addedPreset, setAddedPreset] = useState<"" | "today" | "7d" | "30d">("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
+  const totalPages = Math.max(1, Math.ceil(data.total / pageSize));
+
+  const localIso = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+  const applyAddedPreset = (p: "today" | "7d" | "30d") => {
+    const now = new Date();
+    if (p === "today") {
+      setAddedFrom(localIso(now));
+      setAddedTo(localIso(now));
+    } else {
+      const from = new Date(now);
+      from.setDate(now.getDate() - (p === "7d" ? 6 : 29));
+      setAddedFrom(localIso(from));
+      setAddedTo(localIso(now));
+    }
+    setAddedPreset(p);
+  };
   const [stats, setStats] = useState<{
     applied7: number;
     applied30: number;
@@ -33,7 +58,18 @@ export function Dashboard({
   const load = useCallback(async () => {
     try {
       const [jobs, s] = await Promise.all([
-        api.listJobs({ status: status || undefined, platform: platform || undefined, q: q || undefined, show_all: showAll }),
+        api.listJobs({
+          status: status || undefined,
+          platform: platform || undefined,
+          category: category || undefined,
+          q: q || undefined,
+          show_all: showAll,
+          sort: sort || undefined,
+          added_from: addedFrom || undefined,
+          added_to: addedTo || undefined,
+          limit: pageSize,
+          offset: (page - 1) * pageSize,
+        }),
         api.stats(),
       ]);
       setData(jobs);
@@ -49,11 +85,16 @@ export function Dashboard({
     } finally {
       setLoading(false);
     }
-  }, [status, platform, q, showAll, pushToast]);
+  }, [status, platform, category, q, showAll, sort, addedFrom, addedTo, page, pageSize, pushToast]);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  // any filter change -> back to page 1
+  useEffect(() => {
+    setPage(1);
+  }, [status, platform, category, q, showAll, sort, addedFrom, addedTo, pageSize]);
 
   // poll batch progress while running
   useEffect(() => {
@@ -157,6 +198,21 @@ export function Dashboard({
         </div>
       </div>
 
+      <div className="track-tabs">
+        <button
+          className={`track-tab ${category === "it" ? "active" : ""}`}
+          onClick={() => setCategory("it")}
+        >
+          <b>IT</b> 職位
+        </button>
+        <button
+          className={`track-tab ${category === "general" ? "active" : ""}`}
+          onClick={() => setCategory("general")}
+        >
+          <b>一般</b> 職位（非 IT）
+        </button>
+      </div>
+
       <div className="filterbar">
         {["", "pending_review", "applied", "interviewing", "needs_manual_intervention", "failed"].map((s) => (
           <button
@@ -177,12 +233,76 @@ export function Dashboard({
           <option value="offertoday">OfferToday</option>
           <option value="govhk_gbayes">GovHK · 大灣區計劃</option>
           <option value="govhk_it">GovHK · 資訊及科技界</option>
+          <option value="govhk_general">GovHK · 一般職位</option>
         </select>
         <input
           className="search"
           placeholder="搜尋職位 / 公司…"
           value={q}
           onChange={(e) => setQ(e.target.value)}
+        />
+        <select
+          className="chip-btn"
+          value={sort}
+          onChange={(e) => setSort(e.target.value)}
+          style={{ appearance: "auto" }}
+          title="排序"
+        >
+          <option value="updated">排序：最近更新</option>
+          <option value="created">排序：入庫日期（最新先）</option>
+          <option value="posted">排序：刊登日期</option>
+          <option value="match">排序：匹配度</option>
+        </select>
+        <span className="filter-label">入庫日期：</span>
+        {(
+          [
+            ["today", "今日"],
+            ["7d", "近 7 日"],
+            ["30d", "近 30 日"],
+          ] as const
+        ).map(([p, label]) => (
+          <button
+            key={p}
+            className={`chip-btn ${addedPreset === p ? "active" : ""}`}
+            onClick={() => applyAddedPreset(p)}
+          >
+            {label}
+          </button>
+        ))}
+        {addedPreset && (
+          <button
+            className="chip-btn"
+            onClick={() => {
+              setAddedPreset("");
+              setAddedFrom("");
+              setAddedTo("");
+            }}
+            title="清除入庫日期篩選"
+          >
+            ✕ 清除
+          </button>
+        )}
+        <input
+          type="date"
+          className="chip-btn"
+          value={addedFrom}
+          onChange={(e) => {
+            setAddedPreset("");
+            setAddedFrom(e.target.value);
+          }}
+          title="入庫日期：由"
+          style={{ appearance: "auto" }}
+        />
+        <input
+          type="date"
+          className="chip-btn"
+          value={addedTo}
+          onChange={(e) => {
+            setAddedPreset("");
+            setAddedTo(e.target.value);
+          }}
+          title="入庫日期：至"
+          style={{ appearance: "auto" }}
         />
         <label className="toggle-low">
           <input
@@ -272,6 +392,7 @@ export function Dashboard({
                 <div className="meta">
                   <span>{job.location || "—"}</span>
                   <span>{job.salary_range || "薪酬不詳"}</span>
+                  <span title="入庫日期（入咗職位台嘅日子）">入庫 {fmtDate(job.created_at)}</span>
                 </div>
                 {job.job_summary && (
                   <div className="job-summary" title={job.job_summary}>
@@ -298,6 +419,38 @@ export function Dashboard({
               </div>
             );
           })}
+        </div>
+      )}
+
+      {!loading && data.total > 0 && (
+        <div className="pager">
+          <span className="pager-info">
+            第 {page} / {totalPages} 頁 · 共 {data.total} 份
+            {data.hidden_low_match > 0 && !showAll && `（低匹配隱藏 ${data.hidden_low_match}）`}
+          </span>
+          <div className="pager-btns">
+            <button className="btn" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
+              ‹ 上一頁
+            </button>
+            <select
+              className="chip-btn"
+              value={pageSize}
+              onChange={(e) => setPageSize(Number(e.target.value))}
+              style={{ appearance: "auto" }}
+              title="每頁幾多份"
+            >
+              <option value={20}>20 / 頁</option>
+              <option value={50}>50 / 頁</option>
+              <option value={100}>100 / 頁</option>
+            </select>
+            <button
+              className="btn"
+              disabled={page >= totalPages}
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            >
+              下一頁 ›
+            </button>
+          </div>
         </div>
       )}
 

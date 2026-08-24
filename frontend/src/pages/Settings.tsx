@@ -82,7 +82,7 @@ export function Settings({ pushToast }: { pushToast: (text: string, kind?: "info
 
   if (!p) return <div className="empty">載入中…</div>;
 
-  const set = (k: keyof Profile, v: string | boolean) => setP({ ...p, [k]: v });
+  const set = (k: keyof Profile, v: string | boolean | number) => setP({ ...p, [k]: v as never });
 
   const save = async () => {
     try {
@@ -106,6 +106,14 @@ export function Settings({ pushToast }: { pushToast: (text: string, kind?: "info
         after_cv_intro_general_zh: p.after_cv_intro_general_zh,
         after_cv_intro_general_en: p.after_cv_intro_general_en,
         it_keywords: p.it_keywords,
+        it_track_enabled: p.it_track_enabled,
+        general_track_enabled: p.general_track_enabled,
+        general_job_keywords: p.general_job_keywords,
+        offertoday_general_search_terms: p.offertoday_general_search_terms,
+        govhk_it_max_jobs: p.govhk_it_max_jobs,
+        govhk_general_max_jobs: p.govhk_general_max_jobs,
+        offertoday_it_max_per_search: p.offertoday_it_max_per_search,
+        offertoday_general_max_per_search: p.offertoday_general_max_per_search,
       });
       setP(updated);
       setSkillsText(updated.skills_json);
@@ -347,15 +355,102 @@ export function Settings({ pushToast }: { pushToast: (text: string, kind?: "info
           </div>
         </div>
         <div className="section">
-          <h4>IT／程式判斷關鍵字（用嚟分「IT 版」定「一般版」自我介紹）</h4>
+          <h4>掃描與分類（IT / 一般職位）</h4>
+          <div className="note-inline" style={{ borderStyle: "solid" }}>
+            職位分兩個 track：<b>IT 職位</b>（AI／程式／技術）同<b>一般職位</b>（文職、行政、客戶服務等）。
+            側邊欄「立即掃描」會掃啟用咗嘅 track；職位台分「IT 職位」同「一般職位」兩頁，側邊欄亦可以揀淨掃其中一邊。
+          </div>
+          <div className="check-row" style={{ marginTop: 8 }}>
+            <label>
+              <input
+                type="checkbox"
+                checked={p.it_track_enabled}
+                onChange={(e) => set("it_track_enabled", e.target.checked)}
+              />
+              啟用 IT 職位掃描
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={p.general_track_enabled}
+                onChange={(e) => set("general_track_enabled", e.target.checked)}
+              />
+              啟用一般職位掃描
+            </label>
+          </div>
           <div className="field">
-            <label>關鍵字（逗號分隔；留空用預設，預設已含 AI）</label>
+            <label>IT 職位關鍵字（分類 + 過濾；亦用嚟分「IT 版」定「一般版」自我介紹）</label>
             <textarea
               rows={2}
               value={p.it_keywords}
               onChange={(e) => set("it_keywords", e.target.value)}
-              placeholder="ai, developer, engineer, programmer, software, frontend, backend, python, 程式, 工程師, 開發, 資訊科技, 人工智能…"
+              placeholder="ai, developer, engineer, software, python, 程式, 工程師, 資訊科技…"
             />
+            <div className="note-inline">
+              留空用預設（已含 AI、developer、工程師、軟件 等；預設同你填嘅關鍵字會合併，唔會收窄）。
+            </div>
+          </div>
+          <div className="field">
+            <label>一般職位關鍵字（掃到嘅非 IT 工要匹配呢啲先會保留；留空用預設）</label>
+            <textarea
+              rows={2}
+              value={p.general_job_keywords}
+              onChange={(e) => set("general_job_keywords", e.target.value)}
+              placeholder="文員, 行政助理, 客戶服務, 會計, clerk, admin, assistant…"
+            />
+            <div className="note-inline">
+              IT 分類命中嘅工（如 Software Engineer）永遠唔會入一般頁。
+            </div>
+          </div>
+          <div className="field">
+            <label>每次掃描上限（每 track / 每個來源；填 0 = 還原 .env 預設）</label>
+            <div className="cap-grid">
+              <label>
+                GovHK 資訊及科技界
+                <input
+                  type="number"
+                  min={0}
+                  value={p.govhk_it_max_jobs}
+                  onChange={(e) => set("govhk_it_max_jobs", Number(e.target.value))}
+                />
+              </label>
+              <label>
+                GovHK 一般職位
+                <input
+                  type="number"
+                  min={0}
+                  value={p.govhk_general_max_jobs}
+                  onChange={(e) => set("govhk_general_max_jobs", Number(e.target.value))}
+                />
+              </label>
+              <label>
+                OfferToday IT（每個分類頁）
+                <input
+                  type="number"
+                  min={0}
+                  value={p.offertoday_it_max_per_search}
+                  onChange={(e) => set("offertoday_it_max_per_search", Number(e.target.value))}
+                />
+              </label>
+              <label>
+                OfferToday 一般（每個關鍵字搜尋）
+                <input
+                  type="number"
+                  min={0}
+                  value={p.offertoday_general_max_per_search}
+                  onChange={(e) => set("offertoday_general_max_per_search", Number(e.target.value))}
+                />
+              </label>
+            </div>
+          </div>
+          <div className="field">
+            <label>OfferToday 一般職位搜尋字詞（逗號分隔；留空 = 用上面嘅一般關鍵字）</label>
+            <input
+              value={p.offertoday_general_search_terms}
+              onChange={(e) => set("offertoday_general_search_terms", e.target.value)}
+              placeholder="文員, 行政助理, 客戶服務…"
+            />
+            <div className="note-inline">每個字詞會開一個搜尋頁，每次最多 8 個。</div>
           </div>
         </div>
         <div className="field">

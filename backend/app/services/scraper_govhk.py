@@ -1,18 +1,20 @@
-"""jobs.gov.hk scraper — two vacancy sources, both EMAIL applications.
+"""jobs.gov.hk scraper — two job tracks, both EMAIL applications.
 
-  1. 大灣區青年就業計劃 (platform ``govhk_gbayes``):
-     server-rendered quickview list, verified against live HTML:
-       list:   /0/tc/jobseeker/jobsearch/quickview/gbayes/?page=N
-       detail: /0/tc/jobseeker/jobCard/?order=<token>&from=quickview&for=gbayes
+  IT track (``govhk_gbayes`` + ``govhk_it``):
+    1. 大灣區青年就業計劃 — server-rendered quickview list:
+         list:   /0/tc/jobseeker/jobsearch/quickview/gbayes/?page=N
+         detail: /0/tc/jobseeker/jobCard/?order=<token>&from=quickview&for=gbayes
+    2. 資訊及科技界 — the 「電腦及資訊科技」 vacancy category
+       (Criteria.jobType=5). The search is a POST to /jobsearch/simple/ that
+       stashes the criteria in a session cookie and 302s to
+       /jobsearch/joblist/?direct=False; subsequent pages are plain GETs.
 
-  2. 資訊及科技界 (platform ``govhk_it``):
-     the 「電腦及資訊科技」 vacancy category (Criteria.jobType=5). The search
-     is a POST to /jobsearch/simple/ that stashes the criteria in a session
-     cookie and 302s to /jobsearch/joblist/?direct=False; subsequent pages are
-     plain GETs (session-scoped). Verified against live HTML.
+  一般 track (``govhk_general``): the main quickview (ALL vacancy categories,
+  newest-first) filtered by the user's general keywords and excluding any
+  IT-classified titles.
 
-Application method for both is EMAIL (contact address lives inside 申請須知),
-so drafts carry apply_method="email" + contact_email.
+Application method for all three is EMAIL (contact address lives inside
+申請須知), so drafts carry apply_method="email" + contact_email.
 """
 from __future__ import annotations
 
@@ -24,14 +26,16 @@ from bs4 import BeautifulSoup
 
 from ..config import settings
 from . import scan_control
+from .classify import TrackConfig, classify, title_matches
 from .jobdate import is_fresh
 from .scraper_base import BrowserSession, JobDraft, grab_html, human_delay, open_page
 
 log = logging.getLogger(__name__)
 
 BASE = "https://www2.jobs.gov.hk"
-GBY_PLATFORM = "govhk_gbayes"   # 大灣區青年就業計劃
-IT_PLATFORM = "govhk_it"        # 資訊及科技界（電腦及資訊科技類別）
+GBY_PLATFORM = "govhk_gbayes"      # 大灣區青年就業計劃（IT track）
+IT_PLATFORM = "govhk_it"           # 資訊及科技界（IT track）
+GENERAL_PLATFORM = "govhk_general"  # 一般職位 quickview（一般 track）
 
 GBY_LIST_URL = f"{BASE}/0/tc/jobseeker/jobsearch/quickview/gbayes/"
 QUICKVIEW_URL = f"{BASE}/0/tc/jobseeker/jobsearch/quickview/?direct=False"
@@ -40,12 +44,6 @@ JOBLIST_URL = f"{BASE}/0/tc/jobseeker/jobsearch/joblist/"
 IT_JOB_TYPE = "5"               # 「電腦及資訊科技」空缺類別
 MAX_PAGES = 30
 
-TITLE_KEYWORDS = (
-    "資訊科技", "工程師", "AI", "人工智能", "developer", "programmer",
-    "frontend", "前端", "IT", "軟件", "software", "程式", "系統",
-    "數據", "data", "網絡", "network", "雲", "cloud", "後端", "backend",
-    "全棧", "full stack", "計算機", "計算機科學",
-)
 # A vacancy number looks like 21-26-0008159
 JOB_ID_RE = re.compile(r"\d{2}-\d{2}-\d{7}")
 EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+")
@@ -225,11 +223,6 @@ def parse_detail_html(html: str, detail_url: str) -> dict:
 
 # ---------------------------------------------------------------- scraping
 
-def title_matches_keywords(title: str) -> bool:
-    low = title.lower()
-    return any(k.lower() in low for k in TITLE_KEYWORDS)
-
-
 def _too_old(posted_at: str, max_age: int | None = None) -> bool:
     """True when the posting date parses and is older than the freshness window.
 
@@ -243,17 +236,28 @@ def _too_old(posted_at: str, max_age: int | None = None) -> bool:
     return bool(posted_at) and not is_fresh(posted_at, max_age)
 
 
-async def scrape(session: BrowserSession) -> list[JobDraft]:
-    """Scrape both gov.hk sources; share a seen-set so a GBA IT job isn't
-    duplicated under the IT category."""
+async def scrape(session: BrowserSession, track: str = "it",
+                 cfg: TrackConfig | None = None) -> list[JobDraft]:
+    """Scrape the gov.hk channels for one job track.
+
+    - IT track: 大灣區 quickview (30-day window) + 資訊及科技界 category (cap).
+    - general track: main quickview (all categories) filtered by the general
+      keywords, excluding IT-classified titles.
+    """
+    cfg = cfg or TrackConfig.defaults(track)
     seen: set[str] = set()
-    drafts = await _scrape_gbayes(session, seen)
-    drafts += await _scrape_it(session, seen)
+    if track == "general":
+        drafts = await _scrape_general(session, seen, cfg)
+    else:
+        drafts = await _scrape_gbayes(session, seen, cfg)
+        drafts += await _scrape_it(session, seen, cfg)
     return drafts
 
 
-async def _scrape_gbayes(session: BrowserSession, seen: set[str]) -> list[JobDraft]:
-    """Scrape all quickview/gbayes pages; fetch detail only for keyword-matching titles."""
+async def _scrape_gbayes(session: BrowserSession, seen: set[str],
+                         cfg: TrackConfig | None = None) -> list[JobDraft]:
+    """大灣區青年就業計劃: quickview pages; keep IT-keyword titles only."""
+    cfg = cfg or TrackConfig.defaults("it")
     drafts: list[JobDraft] = []
 
     for page_no in range(1, MAX_PAGES + 1):
@@ -272,10 +276,10 @@ async def _scrape_gbayes(session: BrowserSession, seen: set[str]) -> list[JobDra
         if not items:
             break  # past the last page
         matches = [it for it in items if it["job_id"] and it["job_id"] not in seen
-                   and title_matches_keywords(it["title"])]
+                   and title_matches(it["title"], cfg.keywords)]
         for it in matches:
             seen.add(it["job_id"])
-            drafts.append(await _fetch_detail(session, it, GBY_PLATFORM))
+            drafts.append(await _fetch_detail(session, it, GBY_PLATFORM, "it"))
             # 大灣區：刊登日期要喺一個月（30日）之內；
             # list is sorted newest-first: first stale job -> stop this channel
             if drafts and _too_old(drafts[-1].posted_at, settings.GBAY_MAX_JOB_AGE_DAYS):
@@ -292,11 +296,13 @@ async def _scrape_gbayes(session: BrowserSession, seen: set[str]) -> list[JobDra
     return drafts
 
 
-async def _scrape_it(session: BrowserSession, seen: set[str]) -> list[JobDraft]:
-    """Scrape the 「電腦及資訊科技」 joblist (POST search + session GET pages).
+async def _scrape_it(session: BrowserSession, seen: set[str],
+                     cfg: TrackConfig | None = None) -> list[JobDraft]:
+    """資訊及科技界 joblist (POST search + session GET pages), capped per scan.
 
     The category itself already restricts to IT/tech, so no extra title filter.
     """
+    cfg = cfg or TrackConfig.defaults("it")
     drafts: list[JobDraft] = []
 
     try:
@@ -324,9 +330,9 @@ async def _scrape_it(session: BrowserSession, seen: set[str]) -> list[JobDraft]:
         matches = [it for it in items if it["job_id"] and it["job_id"] not in seen]
         for it in matches:
             seen.add(it["job_id"])
-            drafts.append(await _fetch_detail(session, it, IT_PLATFORM))
-            # 資訊及科技界：每次 scan 最多頭 50 份
-            if len(drafts) >= settings.GOVHK_IT_MAX_JOBS:
+            drafts.append(await _fetch_detail(session, it, IT_PLATFORM, "it"))
+            # 資訊及科技界：每次 scan 最多 N 份（設定可改）
+            if cfg.govhk_max_jobs > 0 and len(drafts) >= cfg.govhk_max_jobs:
                 log.info("govhk IT: reached %s-job cap, stopping channel", len(drafts))
                 return drafts
             # list is sorted newest-first: first stale job -> stop this channel
@@ -344,7 +350,60 @@ async def _scrape_it(session: BrowserSession, seen: set[str]) -> list[JobDraft]:
     return drafts
 
 
-async def _fetch_detail(session: BrowserSession, item: dict, platform: str) -> JobDraft:
+async def _scrape_general(session: BrowserSession, seen: set[str],
+                          cfg: TrackConfig | None = None) -> list[JobDraft]:
+    """一般 track: main quickview (ALL categories) filtered by general keywords.
+
+    Same list/detail format as the gbayes quickview (div.row.item[data-jobcard]).
+    IT-classified titles are excluded; the list is newest-first so the first
+    stale job stops the channel; capped at cfg.govhk_max_jobs per scan.
+    """
+    cfg = cfg or TrackConfig.defaults("general")
+    drafts: list[JobDraft] = []
+
+    for page_no in range(1, MAX_PAGES + 1):
+        if scan_control.stop_requested():
+            log.info("govhk general: stop requested at page %s", page_no)
+            return drafts
+        url = f"{QUICKVIEW_URL}&page={page_no}"
+        try:
+            page = await open_page(session.context, url)
+            page_html = await grab_html(page)
+            await page.close()
+        except Exception as e:  # noqa: BLE001
+            log.warning("govhk general list page %s failed: %s", page_no, e)
+            break
+        items = parse_list_html(page_html)
+        if not items:
+            break  # past the last page
+        matches = [
+            it for it in items
+            if it["job_id"] and it["job_id"] not in seen
+            and title_matches(it["title"], cfg.keywords)      # keep: matches 一般 keywords
+            and classify(it["title"], cfg.it_keywords) == "general"  # drop IT titles
+        ]
+        for it in matches:
+            seen.add(it["job_id"])
+            drafts.append(await _fetch_detail(session, it, GENERAL_PLATFORM, "general"))
+            if cfg.govhk_max_jobs > 0 and len(drafts) >= cfg.govhk_max_jobs:
+                log.info("govhk general: reached %s-job cap, stopping channel", len(drafts))
+                return drafts
+            if drafts and _too_old(drafts[-1].posted_at):
+                log.info("govhk general: reached posting-date window (%s), stopping channel",
+                         drafts[-1].posted_at)
+                return drafts
+            if scan_control.stop_requested():
+                log.info("govhk general: stop requested mid-item — returning partial drafts")
+                return drafts
+        if page_no % 5 == 0:
+            log.info("govhk general page %s: %s new matches, %s drafts so far", page_no, len(matches), len(drafts))
+        await human_delay(0.5, 1.2)
+
+    return drafts
+
+
+async def _fetch_detail(session: BrowserSession, item: dict, platform: str,
+                        category: str = "") -> JobDraft:
     try:
         page = await open_page(session.context, item["detail_url"])
         detail_html = await grab_html(page)
@@ -367,6 +426,7 @@ async def _fetch_detail(session: BrowserSession, item: dict, platform: str) -> J
         apply_method="email",
         contact_email=d.get("contact_email", ""),
         contact_person=d.get("contact_person", ""),
+        category=category,
         raw={"apply_note": d.get("apply_note", "")},
     )
 

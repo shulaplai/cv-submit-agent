@@ -35,6 +35,7 @@ class JobDraft:
     contact_email: str = ""
     contact_person: str = ""
     external_url: str = ""
+    category: str = ""               # it | general (set by the scrapers)
     raw: dict = field(default_factory=dict)
 
 

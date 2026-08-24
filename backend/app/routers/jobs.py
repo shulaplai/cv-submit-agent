@@ -64,8 +64,11 @@ def _attach_dup_counts(db: Session, rows: list[JobApplication]) -> None:
 
 
 @router.get("", response_model=JobListOut)
-def list_jobs(status: str | None = None, platform: str | None = None, q: str = "",
+def list_jobs(status: str | None = None, platform: str | None = None,
+              category: str | None = None, q: str = "",
               show_all: bool = False, limit: int = 100, offset: int = 0,
+              sort: str = "updated",
+              added_from: str | None = None, added_to: str | None = None,
               db: Session = Depends(get_db)):
     query = db.query(JobApplication)
     if not settings.JOBSDB_ENABLED:
@@ -75,18 +78,46 @@ def list_jobs(status: str | None = None, platform: str | None = None, q: str = "
         query = query.filter(JobApplication.status == status)
     if platform:
         query = query.filter(JobApplication.platform == platform)
+    if category in ("it", "general"):
+        query = query.filter(JobApplication.category == category)
     if not show_all:
         query = query.filter(JobApplication.status != "low_match")
     if q:
         like = f"%{q}%"
         query = query.filter(or_(JobApplication.title.like(like),
                                  JobApplication.company.like(like)))
+    # 入庫日期 range filter (created_at is when the job entered the DB)
+    from datetime import datetime, timedelta, timezone
+    if added_from:
+        try:
+            d = datetime.fromisoformat(added_from)
+            if d.tzinfo is None:
+                d = d.replace(tzinfo=timezone.utc)
+            query = query.filter(JobApplication.created_at >= d)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"added_from 格式唔啱: {added_from}")
+    if added_to:
+        try:
+            d = datetime.fromisoformat(added_to)
+            if d.tzinfo is None:
+                d = d.replace(tzinfo=timezone.utc)
+            query = query.filter(JobApplication.created_at < d + timedelta(days=1))
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"added_to 格式唔啱: {added_to}")
+    order = {
+        "updated": JobApplication.updated_at.desc(),
+        "created": JobApplication.created_at.desc(),   # 入庫日期（最新先）
+        "posted": JobApplication.posted_at.desc(),      # 刊登日期
+        "match": JobApplication.match_score.desc(),
+    }.get(sort)
+    if order is None:
+        raise HTTPException(status_code=400, detail=f"sort 必須係 updated/created/posted/match")
     total = query.count()
     hidden_q = db.query(JobApplication).filter(JobApplication.status == "low_match")
     if not settings.JOBSDB_ENABLED:
         hidden_q = hidden_q.filter(JobApplication.platform != "jobsdb")
     hidden = hidden_q.count() if not show_all else 0
-    rows = (query.order_by(JobApplication.updated_at.desc())
+    rows = (query.order_by(order)
             .offset(offset).limit(limit)
             .options(selectinload(JobApplication.cover_letters)).all())
     _attach_dup_counts(db, rows)
@@ -226,6 +257,17 @@ async def refresh_job(job_id: int, db: Session = Depends(get_db)):
             row.location = draft.location
         if draft.salary_range:
             row.salary_range = draft.salary_range
+        if draft.posted_at:
+            row.posted_at = draft.posted_at
+            from ..services.jobdate import is_fresh
+            max_age = settings.MAX_JOB_AGE_DAYS
+            if max_age > 0 and not is_fresh(draft.posted_at, max_age):
+                # 手動 refresh：唔刪你撳緊嗰份工，改為標記過期（隱藏出主頁）
+                row.status = "low_match"
+                row.match_reason = "刊登日期已超過兩個月，已過期"
+                db.commit()
+                db.refresh(row)
+                return row
         if draft.external_url:
             row.external_url = draft.external_url
             row.apply_method = "external_link"

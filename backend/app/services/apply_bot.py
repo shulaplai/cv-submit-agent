@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 from pathlib import Path
 
 from ..models import JobApplication
@@ -54,21 +53,23 @@ DEFAULT_INTRO_GENERAL_EN = ("Hi, I'm a diligent and quick-learning candidate wit
                             "and teamwork skills. I'm genuinely interested in your company and this "
                             "opportunity, and would welcome the chance to contribute and grow. Thank you!")
 
-# Built-in keywords used to classify a job as IT/programming. Overridable in
-# Settings (profile.it_keywords, comma-separated).
-DEFAULT_IT_KEYWORDS = [
-    "ai", "developer", "engineer", "programmer", "programming", "software",
-    "frontend", "backend", "full stack", "full-stack", "python", "javascript",
-    "typescript", "react", "node", "devops", "cloud", "machine learning",
-    "deep learning", "data", "algorithm", "sql", "database",
-    "程式", "工程師", "開發", "資訊科技", "軟件", "軟體", "人工智能", "數據",
-    "編程", "技術員", "演算法", "編碼", "科技",
-]
+
+def _is_it_job(row: JobApplication, kws: list[str] | None = None) -> bool:
+    """True if the job is IT / programming related (title or JD keywords).
+
+    Delegates to the shared classify module so the scan tracks and the
+    apply-time IT/一般 intro choice use the same keyword set.
+    """
+    from .classify import match_keyword, resolve_it_keywords
+
+    kws = kws if kws is not None else resolve_it_keywords(_profile_it_keywords())
+    title = row.title or ""
+    jd = (row.jd_text or "")[:2000]
+    return any(match_keyword(k, title) or match_keyword(k, jd) for k in kws)
 
 
-def _it_keywords() -> list[str]:
-    """Effective IT keywords: profile.it_keywords (comma-separated) if set,
-    else the built-in defaults."""
+def _profile_it_keywords() -> str:
+    """Comma-separated IT keywords from the profile ('' when unset)."""
     from ..db import SessionLocal
     from ..models import Profile
 
@@ -76,33 +77,11 @@ def _it_keywords() -> list[str]:
         db = SessionLocal()
         try:
             p = db.get(Profile, 1)
-            if p and p.it_keywords:
-                kws = [k.strip() for k in p.it_keywords.split(",") if k.strip()]
-                if kws:
-                    return kws
+            return (p.it_keywords or "") if p else ""
         finally:
             db.close()
     except Exception:  # noqa: BLE001
-        pass
-    return list(DEFAULT_IT_KEYWORDS)
-
-
-def _match_it_keyword(kw: str, text: str) -> bool:
-    """Keyword match: CJK -> substring; latin -> whole-word, case-insensitive."""
-    kw = kw.strip()
-    if not kw:
-        return False
-    if any(ord(c) > 127 for c in kw):
-        return kw in text
-    return re.search(rf"\b{re.escape(kw)}\b", text, re.IGNORECASE) is not None
-
-
-def _is_it_job(row: JobApplication, kws: list[str] | None = None) -> bool:
-    """True if the job is IT / programming related (title or JD keywords)."""
-    kws = kws if kws is not None else _it_keywords()
-    title = row.title or ""
-    jd = (row.jd_text or "")[:2000]
-    return any(_match_it_keyword(k, title) or _match_it_keyword(k, jd) for k in kws)
+        return ""
 
 
 def _cv_path_for(language: str) -> str:

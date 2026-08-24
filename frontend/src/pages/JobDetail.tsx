@@ -245,6 +245,7 @@ export function JobDetail({
         <span>{job.salary_range || "薪酬不詳"}</span>
         <span>match {job.match_score}/100</span>
         {job.posted_at && <span>刊登 {job.posted_at}</span>}
+        <span>入庫 {fmtDate(job.created_at)}</span>
       </div>
       {job.match_reason && (
         <div className="note-inline">匹配理由：{job.match_reason}</div>

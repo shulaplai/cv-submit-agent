@@ -38,6 +38,7 @@ def persist_drafts(db: Session, drafts: list[JobDraft]) -> tuple[int, int, list[
         row = JobApplication(
             platform=d.platform,
             job_id_on_platform=d.job_id,
+            category=d.category or "it",
             url=d.url,
             external_url=d.external_url,
             title=d.title,

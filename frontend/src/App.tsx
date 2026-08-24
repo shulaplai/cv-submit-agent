@@ -18,6 +18,11 @@ interface Toast {
 export default function App() {
   const [view, setView] = useState<View>("dashboard");
   const [scan, setScan] = useState<ScanStatus | null>(null);
+  const [scanTrack, setScanTrack] = useState<"all" | "it" | "general">("all");
+  const [kwIt, setKwIt] = useState("");
+  const [kwGeneral, setKwGeneral] = useState("");
+  const [kwOpen, setKwOpen] = useState(false);
+  const [profileLoaded, setProfileLoaded] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const toastId = useRef(0);
 
@@ -41,15 +46,32 @@ export default function App() {
     return () => clearInterval(t);
   }, [refreshScan]);
 
+  // load the profile once for the scan-time keyword editor
+  useEffect(() => {
+    api.profile().then((p) => {
+      setKwIt(p.it_keywords);
+      setKwGeneral(p.general_job_keywords);
+      setProfileLoaded(true);
+    }).catch(() => {});
+  }, []);
+
   const startScan = useCallback(async () => {
     try {
-      const r = await api.startScan();
+      // 掃描前：如果關鍵字改過，先儲存入設定（下次 scan 都用同一套）
+      if (profileLoaded) {
+        const p = await api.profile();
+        if (kwIt !== p.it_keywords || kwGeneral !== p.general_job_keywords) {
+          await api.saveProfile({ it_keywords: kwIt, general_job_keywords: kwGeneral });
+          pushToast("掃描關鍵字已儲存到設定。", "ok");
+        }
+      }
+      const r = await api.startScan(scanTrack);
       pushToast(r.message || "scan 已開始", "info");
       setTimeout(refreshScan, 1500);
     } catch (e) {
       pushToast(`scan 失敗: ${(e as Error).message}`, "err");
     }
-  }, [pushToast, refreshScan]);
+  }, [pushToast, refreshScan, scanTrack, kwIt, kwGeneral, profileLoaded]);
 
   const stopScan = useCallback(async () => {
     try {
@@ -111,6 +133,24 @@ export default function App() {
                 <br />
                 新職位 <b>{scan.last.new_jobs}</b> · 重複 {scan.last.skipped_duplicates} · 掃到{" "}
                 {scan.last.scanned}
+                {scan.last.tracks && (
+                  <>
+                    {scan.last.tracks.it && (
+                      <>
+                        <br />
+                        IT：新 {scan.last.tracks.it.new_jobs} / 掃到 {scan.last.tracks.it.scanned}
+                        {scan.last.tracks.it.skipped_old > 0 && ` · 過期 ${scan.last.tracks.it.skipped_old}`}
+                      </>
+                    )}
+                    {scan.last.tracks.general && (
+                      <>
+                        <br />
+                        一般：新 {scan.last.tracks.general.new_jobs} / 掃到 {scan.last.tracks.general.scanned}
+                        {scan.last.tracks.general.skipped_old > 0 && ` · 過期 ${scan.last.tracks.general.skipped_old}`}
+                      </>
+                    )}
+                  </>
+                )}
                 {scan.last.skipped_old > 0 && (
                   <>
                     <br />
@@ -120,13 +160,19 @@ export default function App() {
                 {scan.last.capped > 0 && (
                   <>
                     <br />
-                    上限 50 份，另有 {scan.last.capped} 份等下次 scan
+                    上限已滿，另有 {scan.last.capped} 份等下次 scan
                   </>
                 )}
                 {scan.last.backfilled > 0 && (
                   <>
                     <br />
                     補齊 {scan.last.backfilled} 份
+                  </>
+                )}
+                {scan.last.details_fetched > 0 && (
+                  <>
+                    <br />
+                    已攞 JD {scan.last.details_fetched} 份
                   </>
                 )}
                 {scan.last.errors.length > 0 && (
@@ -153,6 +199,50 @@ export default function App() {
               ⏸ 暫停
             </button>
           </div>
+          <select
+            className="chip-btn scan-track-select"
+            value={scanTrack}
+            disabled={scan?.running}
+            onChange={(e) => setScanTrack(e.target.value as "all" | "it" | "general")}
+            style={{ appearance: "auto", width: "100%", marginTop: 8 }}
+            title="掃描範圍：全部（跟設定）／淨 IT／淨一般"
+          >
+            <option value="all">掃描範圍：全部（IT + 一般）</option>
+            <option value="it">淨掃描：IT 職位</option>
+            <option value="general">淨掃描：一般職位</option>
+          </select>
+          <button
+            className="btn"
+            onClick={() => setKwOpen((v) => !v)}
+            disabled={scan?.running}
+            style={{ width: "100%", marginTop: 8 }}
+            title="掃描前可以改關鍵字；撳掃描時會儲存到設定"
+          >
+            {kwOpen ? "收起 ✎ 掃描關鍵字" : "✎ 掃描關鍵字"}
+          </button>
+          {kwOpen && (
+            <div className="scan-kw">
+              <label>
+                IT 關鍵字
+                <input
+                  value={kwIt}
+                  onChange={(e) => setKwIt(e.target.value)}
+                  placeholder="ai, developer, engineer, 程式, 工程師…（留空 = 預設）"
+                />
+              </label>
+              <label>
+                一般關鍵字
+                <input
+                  value={kwGeneral}
+                  onChange={(e) => setKwGeneral(e.target.value)}
+                  placeholder="文員, 行政助理, 客戶服務…（留空 = 預設）"
+                />
+              </label>
+              <div className="note-inline" style={{ fontSize: 11, marginTop: 4 }}>
+                改完直接撳「立即掃描」——會自動儲存到設定，之後每次 scan 都用呢套。
+              </div>
+            </div>
+          )}
         </div>
       </aside>
 

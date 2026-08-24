@@ -21,6 +21,12 @@ def get_profile(db: Session = Depends(get_db)):
             cv_en_path=settings.CV_EN_PATH, cv_zh_path=settings.CV_ZH_PATH,
             gba_age_under_29=settings.GBA_AGE_UNDER_29,
             gba_edu_associate_degree=settings.GBA_EDU_ASSOCIATE_DEGREE,
+            it_track_enabled=settings.IT_TRACK_ENABLED,
+            general_track_enabled=settings.GENERAL_TRACK_ENABLED,
+            govhk_it_max_jobs=settings.GOVHK_IT_MAX_JOBS,
+            govhk_general_max_jobs=settings.GOVHK_GENERAL_MAX_JOBS,
+            offertoday_it_max_per_search=settings.OFFERTODAY_MAX_PER_SEARCH,
+            offertoday_general_max_per_search=settings.OFFERTODAY_GENERAL_MAX_PER_SEARCH,
         )
         db.add(profile)
         db.commit()
