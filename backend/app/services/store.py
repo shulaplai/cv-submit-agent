@@ -6,6 +6,7 @@ import logging
 from sqlalchemy.orm import Session
 
 from ..models import JobApplication, utcnow
+from .jobdate import parse_posted_date
 from .scraper_base import JobDraft
 
 log = logging.getLogger(__name__)
@@ -48,6 +49,7 @@ def persist_drafts(db: Session, drafts: list[JobDraft]) -> tuple[int, int, list[
             jd_text=d.jd_text,
             jd_language="en",
             posted_at=d.posted_at,
+            posted_date=parse_posted_date(d.posted_at or ""),
             match_score=0,
             apply_method=_apply_method_for(d),
             contact_email=d.contact_email,

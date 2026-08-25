@@ -11,9 +11,10 @@ export function Dashboard({
   pushToast: (text: string, kind?: "info" | "ok" | "err") => void;
   onOpenHistory: () => void;
 }) {
-  const [data, setData] = useState<JobList>({ items: [], total: 0, hidden_low_match: 0 });
-  const [status, setStatus] = useState("");
-  const [platform, setPlatform] = useState("");
+  const [data, setData] = useState<JobList>({ items: [], total: 0, hidden_low_match: 0, facets: { statuses: {}, platforms: {} } });
+  const [statuses, setStatuses] = useState<string[]>([]);   // 複選
+  const [platforms, setPlatforms] = useState<string[]>([]); // 複選
+  const [readyOnly, setReadyOnly] = useState(false);        // ⚡ 可以即刻投遞
   const [category, setCategory] = useState<"it" | "general" | "">("it");
   const [q, setQ] = useState("");
   const [showAll, setShowAll] = useState(false);
@@ -21,6 +22,12 @@ export function Dashboard({
   const [addedFrom, setAddedFrom] = useState("");
   const [addedTo, setAddedTo] = useState("");
   const [addedPreset, setAddedPreset] = useState<"" | "today" | "7d" | "30d">("");
+  const [postedFrom, setPostedFrom] = useState("");
+  const [postedTo, setPostedTo] = useState("");
+  const [minMatch, setMinMatch] = useState("");
+  const [maxMatch, setMaxMatch] = useState("");
+  const [hasJd, setHasJd] = useState(false);
+  const [hasCl, setHasCl] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
   const totalPages = Math.max(1, Math.ceil(data.total / pageSize));
@@ -55,18 +62,48 @@ export function Dashboard({
   const [showBatchResult, setShowBatchResult] = useState(false);
   const pollRef = useRef<number | null>(null);
 
+  const toggleStatus = (s: string) =>
+    setStatuses((prev) => (prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]));
+  const togglePlatform = (p: string) =>
+    setPlatforms((prev) => (prev.includes(p) ? prev.filter((x) => x !== p) : [...prev, p]));
+
+  const clearFilters = () => {
+    setStatuses([]);
+    setPlatforms([]);
+    setReadyOnly(false);
+    setQ("");
+    setShowAll(false);
+    setSort("updated");
+    setAddedFrom("");
+    setAddedTo("");
+    setAddedPreset("");
+    setPostedFrom("");
+    setPostedTo("");
+    setMinMatch("");
+    setMaxMatch("");
+    setHasJd(false);
+    setHasCl(false);
+  };
+
   const load = useCallback(async () => {
     try {
       const [jobs, s] = await Promise.all([
         api.listJobs({
-          status: status || undefined,
-          platform: platform || undefined,
+          status: statuses.length ? statuses.join(",") : undefined,
+          platform: platforms.length ? platforms.join(",") : undefined,
           category: category || undefined,
           q: q || undefined,
           show_all: showAll,
           sort: sort || undefined,
           added_from: addedFrom || undefined,
           added_to: addedTo || undefined,
+          posted_from: postedFrom || undefined,
+          posted_to: postedTo || undefined,
+          min_match: minMatch === "" ? undefined : Number(minMatch),
+          max_match: maxMatch === "" ? undefined : Number(maxMatch),
+          has_jd: hasJd || undefined,
+          has_cl: hasCl || undefined,
+          ready_to_apply: readyOnly || undefined,
           limit: pageSize,
           offset: (page - 1) * pageSize,
         }),
@@ -85,7 +122,9 @@ export function Dashboard({
     } finally {
       setLoading(false);
     }
-  }, [status, platform, category, q, showAll, sort, addedFrom, addedTo, page, pageSize, pushToast]);
+  }, [statuses, platforms, category, q, showAll, sort, addedFrom, addedTo,
+      postedFrom, postedTo, minMatch, maxMatch, hasJd, hasCl, readyOnly,
+      page, pageSize, pushToast]);
 
   useEffect(() => {
     load();
@@ -94,7 +133,8 @@ export function Dashboard({
   // any filter change -> back to page 1
   useEffect(() => {
     setPage(1);
-  }, [status, platform, category, q, showAll, sort, addedFrom, addedTo, pageSize]);
+  }, [statuses, platforms, category, q, showAll, sort, addedFrom, addedTo,
+      postedFrom, postedTo, minMatch, maxMatch, hasJd, hasCl, readyOnly, pageSize]);
 
   // poll batch progress while running
   useEffect(() => {
@@ -214,27 +254,50 @@ export function Dashboard({
       </div>
 
       <div className="filterbar">
-        {["", "pending_review", "applied", "interviewing", "needs_manual_intervention", "failed"].map((s) => (
+        {(
+          [
+            ["pending_review", "待處理"],
+            ["applied", "已投遞"],
+            ["interviewing", "面試中"],
+            ["needs_manual_intervention", "需介入"],
+            ["failed", "失敗"],
+          ] as const
+        ).map(([s, label]) => (
           <button
-            key={s || "all"}
-            className={`chip-btn ${status === s ? "active" : ""}`}
-            onClick={() => setStatus(s)}
+            key={s}
+            className={`chip-btn ${statuses.includes(s) ? "active" : ""}`}
+            onClick={() => toggleStatus(s)}
+            title={`狀態：${label}（可多揀，再撳取消）`}
           >
-            {s === "" ? "全部" : s === "pending_review" ? "待處理" : s === "applied" ? "已投遞" : s === "interviewing" ? "面試中" : s === "needs_manual_intervention" ? "需介入" : "失敗"}
+            {label}
+            {data.facets.statuses[s] !== undefined ? ` (${data.facets.statuses[s]})` : ""}
           </button>
         ))}
-        <select
-          className="chip-btn"
-          value={platform}
-          onChange={(e) => setPlatform(e.target.value)}
-          style={{ appearance: "auto" }}
+        <button
+          className={`chip-btn ${readyOnly ? "active" : ""}`}
+          onClick={() => setReadyOnly((v) => !v)}
+          title="淨係睇「可以即刻投遞」：待處理 + 有 CL 已備 + 唔係外部網站"
         >
-          <option value="">所有平台</option>
-          <option value="offertoday">OfferToday</option>
-          <option value="govhk_gbayes">GovHK · 大灣區計劃</option>
-          <option value="govhk_it">GovHK · 資訊及科技界</option>
-          <option value="govhk_general">GovHK · 一般職位</option>
-        </select>
+          ⚡ 可以即刻投遞
+        </button>
+        {(
+          [
+            ["offertoday", "OfferToday"],
+            ["govhk_gbayes", "GovHK 大灣區"],
+            ["govhk_it", "GovHK 資訊科技"],
+            ["govhk_general", "GovHK 一般"],
+          ] as const
+        ).map(([p, label]) => (
+          <button
+            key={p}
+            className={`chip-btn ${platforms.includes(p) ? "active" : ""}`}
+            onClick={() => togglePlatform(p)}
+            title={`平台：${label}（可多揀，再撳取消）`}
+          >
+            {label}
+            {data.facets.platforms[p] !== undefined ? ` (${data.facets.platforms[p]})` : ""}
+          </button>
+        ))}
         <input
           className="search"
           placeholder="搜尋職位 / 公司…"
@@ -304,6 +367,52 @@ export function Dashboard({
           title="入庫日期：至"
           style={{ appearance: "auto" }}
         />
+        <span className="filter-label">刊登日期：</span>
+        <input
+          type="date"
+          className="chip-btn"
+          value={postedFrom}
+          onChange={(e) => setPostedFrom(e.target.value)}
+          title="刊登日期：由"
+          style={{ appearance: "auto" }}
+        />
+        <input
+          type="date"
+          className="chip-btn"
+          value={postedTo}
+          onChange={(e) => setPostedTo(e.target.value)}
+          title="刊登日期：至"
+          style={{ appearance: "auto" }}
+        />
+        <span className="filter-label">匹配度：</span>
+        <input
+          type="number"
+          className="num-input"
+          placeholder="≥ 分"
+          min={0}
+          max={100}
+          value={minMatch}
+          onChange={(e) => setMinMatch(e.target.value)}
+          title="匹配度下限"
+        />
+        <input
+          type="number"
+          className="num-input"
+          placeholder="≤ 分"
+          min={0}
+          max={100}
+          value={maxMatch}
+          onChange={(e) => setMaxMatch(e.target.value)}
+          title="匹配度上限"
+        />
+        <label className="toggle-low" title="只顯示有完整 JD 嘅工">
+          <input type="checkbox" checked={hasJd} onChange={(e) => setHasJd(e.target.checked)} />
+          有 JD
+        </label>
+        <label className="toggle-low" title="只顯示已有 CL 嘅工">
+          <input type="checkbox" checked={hasCl} onChange={(e) => setHasCl(e.target.checked)} />
+          有 CL
+        </label>
         <label className="toggle-low">
           <input
             type="checkbox"
@@ -312,6 +421,9 @@ export function Dashboard({
           />
           顯示低匹配（{data.hidden_low_match}）
         </label>
+        <button className="chip-btn" onClick={clearFilters} title="清除全部 filter">
+          ✕ 清除全部
+        </button>
         <button className="btn" onClick={doBackfill} title="為最舊嘅未處理職位補上 JD / CL">
           ⇪ 補齊
         </button>

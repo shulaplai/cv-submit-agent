@@ -52,6 +52,32 @@ def test_parse_offertoday_jsonld_iso():
     assert is_fresh("2026-01-05", 60) is False
 
 
+def test_backfill_posted_dates_parses_strings(db):
+    """Boot backfill fills the normalized posted_date from posted_at (idempotent)."""
+    from app.db import _backfill_posted_dates
+    from app.models import JobApplication
+
+    dmy = JobApplication(platform="govhk_it", job_id_on_platform="b1", title="AI 工程師",
+                         posted_at="11/08/2026")
+    iso = JobApplication(platform="offertoday", job_id_on_platform="b2", title="AI Developer",
+                         posted_at="2026-08-05")
+    unk = JobApplication(platform="offertoday", job_id_on_platform="b3", title="AI Analyst",
+                         posted_at="")
+    db.add_all([dmy, iso, unk])
+    db.commit()
+
+    _backfill_posted_dates()
+
+    db.expire_all()  # backfill ran in its own session; refresh cached objects
+    assert db.get(JobApplication, dmy.id).posted_date == date(2026, 8, 11)
+    assert db.get(JobApplication, iso.id).posted_date == date(2026, 8, 5)
+    assert db.get(JobApplication, unk.id).posted_date is None
+
+    # second run changes nothing (idempotent)
+    _backfill_posted_dates()
+    assert db.get(JobApplication, dmy.id).posted_date == date(2026, 8, 11)
+
+
 def test_is_fresh_keeps_recent_and_unknown():
     assert is_fresh("1d ago", 60) is True
     assert is_fresh("11/08/2026", 60) is True

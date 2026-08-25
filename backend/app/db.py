@@ -52,6 +52,7 @@ _COLUMN_MIGRATIONS = [
     ("job_applications", "dup_key", "VARCHAR(300) NOT NULL DEFAULT ''"),
     ("job_applications", "job_summary", "TEXT NOT NULL DEFAULT ''"),
     ("job_applications", "category", "VARCHAR(10) NOT NULL DEFAULT 'it'"),
+    ("job_applications", "posted_date", "DATE"),
 ]
 
 # Seed per-source scan caps from .env into the (single) profile row when the
@@ -87,6 +88,8 @@ def migrate() -> None:
                           "ON job_applications (dup_key)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_job_applications_category "
                           "ON job_applications (category)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_job_applications_posted_date "
+                          "ON job_applications (posted_date)"))
     # gov.hk now splits into two categories; legacy rows belong to the GBA scheme.
     with engine.begin() as conn:
         conn.execute(text(
@@ -100,6 +103,35 @@ def migrate() -> None:
                 f"UPDATE profiles SET {col}=:val WHERE {col}=0"
             ), {"val": int(env_val)})
     _backfill_categories()
+    _backfill_posted_dates()
+
+
+def _backfill_posted_dates() -> None:
+    """Fill the normalized posted_date column from posted_at strings.
+
+    Idempotent (only touches NULL rows), so running it every boot is safe.
+    Relative dates ("24d ago") resolve against the day they are parsed — close
+    enough for the 刊登日期 filter/sort.
+    """
+    from .services.jobdate import parse_posted_date
+
+    try:
+        from .models import JobApplication
+    except Exception:  # noqa: BLE001
+        return
+    db = SessionLocal()
+    try:
+        changed = 0
+        for row in db.query(JobApplication).filter(JobApplication.posted_date.is_(None)).all():
+            d = parse_posted_date(row.posted_at or "")
+            if d is not None:
+                row.posted_date = d
+                changed += 1
+        if changed:
+            db.commit()
+            log.info("posted_date backfill: parsed %s rows", changed)
+    finally:
+        db.close()
 
 
 def _backfill_categories() -> None:

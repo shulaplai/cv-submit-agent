@@ -251,3 +251,116 @@ def test_jobs_list_sort_and_added_date_filter(client, db):
     # bad date -> 400
     r = client.get("/api/jobs?added_from=notadate")
     assert r.status_code == 400
+
+
+# ------------------------------------------------------------ filter 改善 (multi-select etc.)
+
+def test_jobs_list_multi_select_status_and_platform(client, db):
+    """status / platform accept comma-separated multi-selects (union)."""
+    from app.models import JobApplication
+
+    db.add_all([
+        JobApplication(platform="offertoday", job_id_on_platform="m1", title="AI Developer",
+                       status="pending_review"),
+        JobApplication(platform="offertoday", job_id_on_platform="m2", title="AI Engineer",
+                       status="needs_manual_intervention"),
+        JobApplication(platform="govhk_it", job_id_on_platform="m3", title="程式員",
+                       status="applied"),
+        JobApplication(platform="govhk_general", job_id_on_platform="m4", title="文員",
+                       status="failed"),
+    ])
+    db.commit()
+
+    r = client.get("/api/jobs?status=pending_review,needs_manual_intervention&limit=10")
+    titles = {j["title"] for j in r.json()["items"]}
+    assert titles == {"AI Developer", "AI Engineer"}
+
+    r = client.get("/api/jobs?platform=offertoday,govhk_it&limit=10")
+    titles = {j["title"] for j in r.json()["items"]}
+    assert titles == {"AI Developer", "AI Engineer", "程式員"}
+
+
+def test_jobs_list_ready_to_apply_and_content_filters(client, db):
+    """ready_to_apply / has_jd / has_cl / min_match / max_match filters."""
+    from app.models import CoverLetter, JobApplication
+
+    ready = JobApplication(platform="offertoday", job_id_on_platform="r1", title="AI Developer",
+                           status="pending_review", jd_text="JD", match_score=80)
+    no_cl = JobApplication(platform="offertoday", job_id_on_platform="r2", title="AI Engineer",
+                           status="pending_review", jd_text="JD", match_score=60)
+    ext = JobApplication(platform="offertoday", job_id_on_platform="r3", title="AI Designer",
+                         status="pending_review", jd_text="JD", match_score=70,
+                         apply_method="external_link")
+    no_jd = JobApplication(platform="offertoday", job_id_on_platform="r4", title="AI Analyst",
+                           status="pending_review", match_score=50)
+    db.add_all([ready, no_cl, ext, no_jd])
+    db.flush()
+    db.add(CoverLetter(application_id=ready.id, language="zh", content="CL", version=1))
+    db.commit()
+
+    r = client.get("/api/jobs?ready_to_apply=true&limit=10")
+    assert {j["title"] for j in r.json()["items"]} == {"AI Developer"}
+
+    r = client.get("/api/jobs?has_jd=true&limit=10")
+    assert {j["title"] for j in r.json()["items"]} == {"AI Developer", "AI Engineer", "AI Designer"}
+
+    r = client.get("/api/jobs?has_cl=true&limit=10")
+    assert {j["title"] for j in r.json()["items"]} == {"AI Developer"}
+
+    r = client.get("/api/jobs?min_match=65&max_match=75&limit=10")
+    assert {j["title"] for j in r.json()["items"]} == {"AI Designer"}
+
+
+def test_jobs_list_posted_date_range(client, db):
+    """刊登日期 range filter uses the normalized posted_date column."""
+    from datetime import date
+
+    from app.models import JobApplication
+
+    db.add_all([
+        JobApplication(platform="offertoday", job_id_on_platform="p1", title="AI Developer",
+                       status="pending_review", posted_at="2026-08-01", posted_date=date(2026, 8, 1)),
+        JobApplication(platform="offertoday", job_id_on_platform="p2", title="AI Engineer",
+                       status="pending_review", posted_at="2026-08-10", posted_date=date(2026, 8, 10)),
+        JobApplication(platform="offertoday", job_id_on_platform="p3", title="AI Analyst",
+                       status="pending_review", posted_at="2026-07-01", posted_date=date(2026, 7, 1)),
+    ])
+    db.commit()
+
+    r = client.get("/api/jobs?posted_from=2026-08-01&posted_to=2026-08-09&limit=10")
+    assert {j["title"] for j in r.json()["items"]} == {"AI Developer"}
+
+    r = client.get("/api/jobs?posted_from=2026-08-01&limit=10")
+    assert {j["title"] for j in r.json()["items"]} == {"AI Developer", "AI Engineer"}
+
+    r = client.get("/api/jobs?posted_from=notadate")
+    assert r.status_code == 400
+
+
+def test_jobs_list_facets_counts(client, db):
+    """facets: status / platform counts under active filters (excluding own dimension)."""
+    from app.models import CoverLetter, JobApplication
+
+    a = JobApplication(platform="offertoday", job_id_on_platform="f1", title="AI Developer",
+                       status="pending_review")
+    b = JobApplication(platform="offertoday", job_id_on_platform="f2", title="AI Engineer",
+                       status="applied")
+    c = JobApplication(platform="govhk_it", job_id_on_platform="f3", title="程式員",
+                       status="pending_review")
+    db.add_all([a, b, c])
+    db.flush()
+    db.add(CoverLetter(application_id=a.id, language="zh", content="CL", version=1))
+    db.commit()
+
+    r = client.get("/api/jobs?limit=10")
+    facets = r.json()["facets"]
+    assert facets["statuses"]["pending_review"] == 2
+    assert facets["statuses"]["applied"] == 1
+    assert facets["platforms"]["offertoday"] == 2
+    assert facets["platforms"]["govhk_it"] == 1
+
+    # active status filter -> platform counts respect it
+    r = client.get("/api/jobs?status=applied&limit=10")
+    facets = r.json()["facets"]
+    assert facets["platforms"]["offertoday"] == 1
+    assert "govhk_it" not in facets["platforms"]

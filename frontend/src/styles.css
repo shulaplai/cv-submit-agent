@@ -345,6 +345,25 @@ input.search {
   outline: none;
 }
 input.search:focus { border-color: var(--accent); }
+.filter-label {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--ink-faint);
+  margin-left: 4px;
+}
+input.num-input {
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--line-strong);
+  background: var(--paper-3);
+  color: var(--ink);
+  width: 58px;
+  outline: none;
+}
+input.num-input:focus { border-color: var(--accent); }
 .toggle-low {
   font-family: var(--mono);
   font-size: 12px;

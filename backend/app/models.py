@@ -1,9 +1,9 @@
 """ORM models."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -78,6 +78,9 @@ class JobApplication(Base):
     jd_text: Mapped[str] = mapped_column(Text, default="")
     jd_language: Mapped[str] = mapped_column(String(10), default="zh")  # en | zh
     posted_at: Mapped[str] = mapped_column(String(50), default="")
+    # Normalized posting date parsed from posted_at (DD/MM/YYYY, ISO, relative).
+    # Used by the 刊登日期 range filter + sort; backfilled every boot.
+    posted_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     scraped_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     match_score: Mapped[int] = mapped_column(Integer, default=0)
     match_reason: Mapped[str] = mapped_column(Text, default="")

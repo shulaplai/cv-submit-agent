@@ -26,7 +26,7 @@ from .llm import LLMError
 from .matcher import keyword_score, score_job
 from .scraper_base import get_browser
 from .store import persist_drafts
-from .jobdate import is_fresh
+from .jobdate import is_fresh, parse_posted_date
 from . import scan_control
 
 log = logging.getLogger(__name__)
@@ -46,6 +46,32 @@ def _platform_scrapers() -> tuple:
 PLATFORM_SCRAPERS = _platform_scrapers()
 
 _WS_RE = re.compile(r"\s+")
+
+
+class _PaceGate:
+    """Guarantees a minimum interval between page opens (site politeness).
+
+    Concurrent callers (the scan opens up to SEMAPHORE detail pages at once)
+    queue on an asyncio lock; each caller is released at least
+    ``min_interval`` seconds after the previous one, so the job site never
+    sees a burst of requests. Interval 0 = no pacing (tests / manual actions).
+    """
+
+    def __init__(self, min_interval: float):
+        self.min_interval = max(0.0, min_interval)
+        self._lock = asyncio.Lock()
+        self._next_open = 0.0
+
+    async def wait(self) -> None:
+        if self.min_interval <= 0:
+            return
+        async with self._lock:
+            now = asyncio.get_running_loop().time()
+            wait = self._next_open - now
+            if wait > 0:
+                await asyncio.sleep(wait)
+            # re-read AFTER the sleep so consecutive callers stay spaced apart
+            self._next_open = asyncio.get_running_loop().time() + self.min_interval
 
 
 def make_dup_key(company: str, title: str) -> str:
@@ -243,19 +269,26 @@ async def run_scan(db: Session, progress: dict | None = None,
         # LLM-budget top-N. Detail fetch also reveals the OfferToday datePosted,
         # so stale jobs get dropped here like scan-time freshness filtering.
         sem = asyncio.Semaphore(6)
+        # Politeness: at least SCAN_JOB_DELAY_SECONDS between per-job page
+        # opens, shared across every phase of this scan (new rows, backfill,
+        # enrich). Concurrent tasks still overlap their parsing / LLM work.
+        pace = _PaceGate(settings.SCAN_JOB_DELAY_SECONDS)
         dropped_ids: set[int] = set()
         dropped_by_track: dict[str, int] = {}
+        fetch_count = {"n": 0}
 
         async def fill_detail(row: JobApplication) -> None:
             async with sem:
                 try:
-                    if await _fill_detail(db, row, _fetch_detail_for(row.platform)):
+                    if await _fill_detail(db, row, _fetch_detail_for(row.platform), pace=pace):
                         dropped_ids.add(row.id)
                         summary.skipped_old += 1
                         dropped_by_track[row.category] = dropped_by_track.get(row.category, 0) + 1
                         return
                     if row.jd_text:
                         summary.details_fetched += 1
+                        fetch_count["n"] += 1
+                        set_progress(row.platform, "攞緊 JD", fetch_count["n"])
                 except Exception as e:  # noqa: BLE001
                     log.warning("detail fetch failed for %s/%s: %s",
                                 row.platform, row.job_id_on_platform, e)
@@ -283,7 +316,7 @@ async def run_scan(db: Session, progress: dict | None = None,
             async with sem:
                 try:
                     set_progress(platform, f"enriching ({kind})", row.title[:40])
-                    dropped = await _enrich_one(db, row, platform, fetch_detail, load_skills())
+                    dropped = await _enrich_one(db, row, platform, fetch_detail, load_skills(), pace=pace)
                     if dropped:
                         # OfferToday datePosted revealed the job is stale
                         # (> MAX_JOB_AGE_DAYS) — treat it like scan-time filtering.
@@ -336,14 +369,18 @@ def _detail_backfill_candidates(db: Session, limit: int) -> list[JobApplication]
     )
 
 
-async def _fill_detail(db: Session, row: JobApplication, fetch_detail) -> bool:
+async def _fill_detail(db: Session, row: JobApplication, fetch_detail,
+                       pace: _PaceGate | None = None) -> bool:
     """Fetch the full JD for one row if missing (jobsdb/offertoday only).
 
     Also records the posted date (incl. OfferToday's JSON-LD datePosted) and
     returns True when the row was DELETED as stale (> MAX_JOB_AGE_DAYS).
+    ``pace`` (optional) spaces consecutive page opens during a scan.
     """
     if row.jd_text or fetch_detail is None or row.platform not in ("jobsdb", "offertoday"):
         return False
+    if pace is not None:
+        await pace.wait()
     session = await get_browser(row.platform)
     draft = _draft_from_row(row)
     draft = await fetch_detail(session, draft)
@@ -356,6 +393,7 @@ async def _fill_detail(db: Session, row: JobApplication, fetch_detail) -> bool:
         row.salary_range = draft.salary_range
     if draft.posted_at:
         row.posted_at = draft.posted_at
+        row.posted_date = parse_posted_date(draft.posted_at)
         max_age = settings.MAX_JOB_AGE_DAYS
         if max_age > 0 and not is_fresh(draft.posted_at, max_age):
             log.info("dropping stale job %s/%s after detail fetch (posted %r, >%sd old)",
@@ -399,14 +437,15 @@ def _backfill_candidates(db: Session, limit: int) -> list[JobApplication]:
 
 
 async def _enrich_one(db: Session, row: JobApplication, platform: str,
-                      fetch_detail, skills: list[str]) -> bool:
+                      fetch_detail, skills: list[str],
+                      pace: _PaceGate | None = None) -> bool:
     """Detail fetch (if missing) + language + match score + CL for one job.
 
     Returns True when the row was DELETED (OfferToday's datePosted turned out
     to be stale — same treatment as scan-time freshness filtering).
     """
     # 1. full JD if the list only gave a stub (skips when already fetched)
-    if await _fill_detail(db, row, fetch_detail):
+    if await _fill_detail(db, row, fetch_detail, pace=pace):
         return True
 
     row.jd_language = detect_language(row.jd_text or row.title)

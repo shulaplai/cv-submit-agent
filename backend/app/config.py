@@ -36,6 +36,11 @@ class Settings(BaseSettings):
     # LLM budget per scan: only the top-N (by keyword pre-score) new jobs get
     # full LLM match + CL; the rest are left for backfill / manual refresh.
     MAX_ENRICH_PER_SCAN: int = 30
+    # Politeness pacing: at least this many seconds between per-job page opens
+    # during a scan (JD detail fetches + backfill). Protects the job sites from
+    # request bursts (anti-WAF). The listing scrape keeps its own random human
+    # delays on top. Set 0 to disable.
+    SCAN_JOB_DELAY_SECONDS: float = 3.0
     # Every scan ALSO fetches the full JD for every new row (no LLM) plus up to
     # this many oldest rows still missing a JD (detail-only backfill), so the
     # whole board gradually carries a description. Set 0 to disable.

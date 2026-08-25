@@ -1,6 +1,7 @@
 """Job application endpoints: list, detail, enrich, CL versions, apply actions."""
 import asyncio
 import logging
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -27,6 +28,7 @@ from ..services.language import detect_language
 from ..services.llm import LLMError
 from ..services.matcher import score_job
 from ..services.scanner import make_dup_key
+from ..services.jobdate import parse_posted_date
 from ..services.scraper_base import get_browser
 from ..services.store import mark_applied
 
@@ -63,21 +65,42 @@ def _attach_dup_counts(db: Session, rows: list[JobApplication]) -> None:
         r.dup_count = max(0, (counts.get(r.dup_key, 0) - 1)) if r.dup_key else 0
 
 
-@router.get("", response_model=JobListOut)
-def list_jobs(status: str | None = None, platform: str | None = None,
-              category: str | None = None, q: str = "",
-              show_all: bool = False, limit: int = 100, offset: int = 0,
-              sort: str = "updated",
-              added_from: str | None = None, added_to: str | None = None,
-              db: Session = Depends(get_db)):
-    query = db.query(JobApplication)
+def _split_multi(value: str | None) -> list[str]:
+    """Comma-separated multi-select -> non-empty trimmed list."""
+    if not value:
+        return []
+    return [v.strip() for v in value.split(",") if v.strip()]
+
+
+def _parse_day(value: str | None, name: str, date_only: bool) -> date | datetime | None:
+    """Parse a YYYY-MM-DD filter value; 400 on garbage. Returns a date (or a
+    datetime when date_only is False — used for created_at ranges)."""
+    if not value:
+        return None
+    try:
+        if date_only:
+            return date.fromisoformat(value)
+        d = datetime.fromisoformat(value)
+        if d.tzinfo is None:
+            d = d.replace(tzinfo=timezone.utc)
+        return d
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"{name} 格式唔啱: {value}")
+
+
+def _apply_filters(query, *, statuses=None, platforms=None, category=None, q="",
+                   show_all=False, added_from=None, added_to=None,
+                   posted_from=None, posted_to=None, min_match=None, max_match=None,
+                   has_jd=False, has_cl=False, ready_to_apply=False):
+    """Shared filter builder. ``statuses``/``platforms`` are lists (multi-select).
+    Used both for the main query and for facet counts."""
     if not settings.JOBSDB_ENABLED:
         # JobsDB is hidden for now — keep its rows out of the board.
         query = query.filter(JobApplication.platform != "jobsdb")
-    if status:
-        query = query.filter(JobApplication.status == status)
-    if platform:
-        query = query.filter(JobApplication.platform == platform)
+    if statuses:
+        query = query.filter(JobApplication.status.in_(statuses))
+    if platforms:
+        query = query.filter(JobApplication.platform.in_(platforms))
     if category in ("it", "general"):
         query = query.filter(JobApplication.category == category)
     if not show_all:
@@ -86,29 +109,86 @@ def list_jobs(status: str | None = None, platform: str | None = None,
         like = f"%{q}%"
         query = query.filter(or_(JobApplication.title.like(like),
                                  JobApplication.company.like(like)))
-    # 入庫日期 range filter (created_at is when the job entered the DB)
-    from datetime import datetime, timedelta, timezone
-    if added_from:
-        try:
-            d = datetime.fromisoformat(added_from)
-            if d.tzinfo is None:
-                d = d.replace(tzinfo=timezone.utc)
-            query = query.filter(JobApplication.created_at >= d)
-        except ValueError:
-            raise HTTPException(status_code=400, detail=f"added_from 格式唔啱: {added_from}")
-    if added_to:
-        try:
-            d = datetime.fromisoformat(added_to)
-            if d.tzinfo is None:
-                d = d.replace(tzinfo=timezone.utc)
-            query = query.filter(JobApplication.created_at < d + timedelta(days=1))
-        except ValueError:
-            raise HTTPException(status_code=400, detail=f"added_to 格式唔啱: {added_to}")
+    # 入庫日期 range (created_at is when the job entered the DB)
+    d_from = _parse_day(added_from, "added_from", False)
+    if d_from is not None:
+        query = query.filter(JobApplication.created_at >= d_from)
+    d_to = _parse_day(added_to, "added_to", False)
+    if d_to is not None:
+        query = query.filter(JobApplication.created_at < d_to + timedelta(days=1))
+    # 刊登日期 range (normalized posted_date column)
+    p_from = _parse_day(posted_from, "posted_from", True)
+    if p_from is not None:
+        query = query.filter(JobApplication.posted_date >= p_from)
+    p_to = _parse_day(posted_to, "posted_to", True)
+    if p_to is not None:
+        query = query.filter(JobApplication.posted_date <= p_to)
+    # 匹配度範圍
+    if min_match is not None:
+        query = query.filter(JobApplication.match_score >= min_match)
+    if max_match is not None:
+        query = query.filter(JobApplication.match_score <= max_match)
+    # 有無 JD / 有無 CL
+    if has_jd:
+        query = query.filter(JobApplication.jd_text != "")
+    if has_cl:
+        query = query.filter(JobApplication.cover_letters.any())
+    # 「可以即刻投遞」: 待處理 + 有 CL 已備 + 唔係外部網站
+    if ready_to_apply:
+        query = query.filter(
+            JobApplication.status == "pending_review",
+            JobApplication.apply_method != "external_link",
+            JobApplication.cover_letters.any(),
+        )
+    return query
+
+
+def _facets(db: Session, **filters) -> dict:
+    """Per-status / per-platform counts under the active filters (excluding the
+    dimension being counted) — powers the badge numbers on the filter chips."""
+    status_facets: dict[str, int] = {}
+    base = _apply_filters(db.query(JobApplication),
+                          statuses=None, platforms=filters.get("platforms"),
+                          **{k: v for k, v in filters.items() if k not in ("statuses", "platforms")})
+    for s, n in base.with_entities(JobApplication.status, func.count()).group_by(JobApplication.status):
+        status_facets[s] = n
+    platform_facets: dict[str, int] = {}
+    base = _apply_filters(db.query(JobApplication),
+                          statuses=filters.get("statuses"), platforms=None,
+                          **{k: v for k, v in filters.items() if k not in ("statuses", "platforms")})
+    for p, n in base.with_entities(JobApplication.platform, func.count()).group_by(JobApplication.platform):
+        platform_facets[p] = n
+    return {"statuses": status_facets, "platforms": platform_facets}
+
+
+@router.get("", response_model=JobListOut)
+def list_jobs(status: str | None = None, platform: str | None = None,
+              category: str | None = None, q: str = "",
+              show_all: bool = False, limit: int = 100, offset: int = 0,
+              sort: str = "updated",
+              added_from: str | None = None, added_to: str | None = None,
+              posted_from: str | None = None, posted_to: str | None = None,
+              min_match: int | None = None, max_match: int | None = None,
+              has_jd: bool = False, has_cl: bool = False,
+              ready_to_apply: bool = False,
+              db: Session = Depends(get_db)):
+    """List jobs. status / platform accept comma-separated multi-selects;
+    ready_to_apply = 待處理 + 有 CL + 唔係外部網站 (可以即刻投遞)."""
+    filters = dict(
+        statuses=_split_multi(status), platforms=_split_multi(platform),
+        category=category, q=q, show_all=show_all,
+        added_from=added_from, added_to=added_to,
+        posted_from=posted_from, posted_to=posted_to,
+        min_match=min_match, max_match=max_match,
+        has_jd=has_jd, has_cl=has_cl, ready_to_apply=ready_to_apply,
+    )
+    query = _apply_filters(db.query(JobApplication), **filters)
     order = {
-        "updated": JobApplication.updated_at.desc(),
-        "created": JobApplication.created_at.desc(),   # 入庫日期（最新先）
-        "posted": JobApplication.posted_at.desc(),      # 刊登日期
-        "match": JobApplication.match_score.desc(),
+        "updated": (JobApplication.updated_at.desc(),),
+        "created": (JobApplication.created_at.desc(),),   # 入庫日期（最新先）
+        # 刊登日期：用正規化 posted_date 排序（無刊登日期嘅排最後）
+        "posted": (JobApplication.posted_date.desc().nullslast(), JobApplication.id.desc()),
+        "match": (JobApplication.match_score.desc(),),
     }.get(sort)
     if order is None:
         raise HTTPException(status_code=400, detail=f"sort 必須係 updated/created/posted/match")
@@ -117,11 +197,12 @@ def list_jobs(status: str | None = None, platform: str | None = None,
     if not settings.JOBSDB_ENABLED:
         hidden_q = hidden_q.filter(JobApplication.platform != "jobsdb")
     hidden = hidden_q.count() if not show_all else 0
-    rows = (query.order_by(order)
+    rows = (query.order_by(*order)
             .offset(offset).limit(limit)
             .options(selectinload(JobApplication.cover_letters)).all())
     _attach_dup_counts(db, rows)
-    return JobListOut(items=rows, total=total, hidden_low_match=hidden)
+    return JobListOut(items=rows, total=total, hidden_low_match=hidden,
+                      facets=_facets(db, **filters))
 
 
 # ------------------------------------------------------------------ batch apply
@@ -259,6 +340,7 @@ async def refresh_job(job_id: int, db: Session = Depends(get_db)):
             row.salary_range = draft.salary_range
         if draft.posted_at:
             row.posted_at = draft.posted_at
+            row.posted_date = parse_posted_date(draft.posted_at)
             from ..services.jobdate import is_fresh
             max_age = settings.MAX_JOB_AGE_DAYS
             if max_age > 0 and not is_fresh(draft.posted_at, max_age):

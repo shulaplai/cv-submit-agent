@@ -53,6 +53,8 @@ export interface JobList {
   items: Job[];
   total: number;
   hidden_low_match: number;
+  // filter-chip badge counts (respecting the active filters, minus the counted dimension)
+  facets: { statuses: Record<string, number>; platforms: Record<string, number> };
 }
 
 export interface ScanStatus {

@@ -54,6 +54,8 @@ class JobListOut(BaseModel):
     items: list[JobApplicationOut]
     total: int
     hidden_low_match: int
+    # filter-chip badge counts: {"statuses": {status: n}, "platforms": {platform: n}}
+    facets: dict = {}
 
 
 class EmailPreview(BaseModel):
