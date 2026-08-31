@@ -96,6 +96,9 @@ def load_track_configs(db: Session, only: str | None = None) -> list[TrackConfig
         govhk_max_jobs=(profile.govhk_it_max_jobs if profile else 0) or settings.GOVHK_IT_MAX_JOBS,
         offertoday_max_per_search=(profile.offertoday_it_max_per_search if profile else 0)
         or settings.OFFERTODAY_MAX_PER_SEARCH,
+        # 額外 IT 關鍵字搜尋（AI agent 等）— 喺 3 個分類頁之上再開
+        offertoday_search_terms=parse_keywords(settings.OFFERTODAY_IT_SEARCH_TERMS),
+        max_searches=settings.OFFERTODAY_IT_MAX_SEARCHES,
     )
     cfg_general = TrackConfig(
         name="general", label="一般",
@@ -189,19 +192,21 @@ async def run_scan(db: Session, progress: dict | None = None,
                 summary.stopped = True
                 break
 
-        # freshness filter: drop jobs posted more than MAX_JOB_AGE_DAYS ago
-        max_age = settings.MAX_JOB_AGE_DAYS
-        if max_age > 0:
-            kept: list = []
-            for d in t_drafts:
-                if is_fresh(d.posted_at, max_age):
-                    kept.append(d)
-                else:
-                    t_skipped_old += 1
-                    summary.skipped_old += 1
-                    log.info("dropping stale job %s/%s (posted %r, >%sd old)",
-                             d.platform, d.job_id, d.posted_at, max_age)
-            t_drafts = kept
+        # freshness filter: drop jobs posted more than the window ago.
+        # 大灣區 = GBAY_MAX_JOB_AGE_DAYS（60日，用戶揀咗）；其他渠道 =
+        # MAX_JOB_AGE_DAYS（14日 — 淨係收刊登日期喺附近嘅新工）。
+        kept: list = []
+        for d in t_drafts:
+            max_age = (settings.GBAY_MAX_JOB_AGE_DAYS if d.platform == "govhk_gbayes"
+                       else settings.MAX_JOB_AGE_DAYS)
+            if max_age > 0 and not is_fresh(d.posted_at, max_age):
+                t_skipped_old += 1
+                summary.skipped_old += 1
+                log.info("dropping stale job %s/%s (posted %r, >%sd old)",
+                         d.platform, d.job_id, d.posted_at, max_age)
+            else:
+                kept.append(d)
+        t_drafts = kept
 
         # per-track global cap: at most MAX_SCAN_JOBS drafts, fair-share
         # round-robin across platforms so one platform can't crowd out others
@@ -263,6 +268,13 @@ async def run_scan(db: Session, progress: dict | None = None,
             scored.sort(key=lambda x: x[0], reverse=True)
             candidates = [r for _, r in scored]
             summary.low_match = sum(1 for s, r in scored if s < settings.MATCH_THRESHOLD)
+            if settings.ENRICH_ALL_IT:
+                # 用戶要求：所有新 IT 工都要 LLM 完整評分（唔限）；一般工維持 top-N。
+                it_rows = [r for r in candidates if r.category == "it"]
+                gen_rows = [r for r in candidates if r.category == "general"][:max(0, budget)]
+                candidates = it_rows + gen_rows
+            else:
+                candidates = candidates[: max(0, budget)]
 
         # ---- A. fetch the full JD for EVERY new row (no LLM) ----
         # The user wants the whole board to carry a description, not just the
@@ -304,12 +316,12 @@ async def run_scan(db: Session, progress: dict | None = None,
                         summary.tracks[tname]["new_jobs"] = max(0, summary.tracks[tname]["new_jobs"] - n)
 
         # ---- B. detail-only backfill: oldest rows still missing a JD ----
+        # (只攞 JD，唔用 LLM — 舊工照樣有職位介紹)
         if settings.DETAIL_BACKFILL_PER_SCAN > 0:
             old_rows = _detail_backfill_candidates(db, settings.DETAIL_BACKFILL_PER_SCAN)
             if old_rows:
                 await asyncio.gather(*(fill_detail(r) for r in old_rows))
 
-        remaining = max(0, budget - len(candidates[:budget]))
         tasks = []
 
         async def enrich(row: JobApplication, platform: str, fetch_detail, kind: str) -> None:
@@ -330,26 +342,15 @@ async def run_scan(db: Session, progress: dict | None = None,
                     log.exception("enrich failed for %s/%s", platform, row.job_id_on_platform)
                     summary.errors.append(f"{platform}/{row.job_id_on_platform}: {e}")
 
-        for row in candidates[: max(0, budget)]:
+        for row in candidates:
             tasks.append(enrich(row, row.platform, _fetch_detail_for(row.platform), "new"))
 
         if tasks:
             await asyncio.gather(*tasks)
 
-        # backfill: oldest un-enriched rows when budget remains.
-        # Computed AFTER the new-row enrich so rows dropped there (stale
-        # OfferToday datePosted) can't be re-processed by the backfill pass.
-        backfill_rows: list[JobApplication] = []
-        if remaining > 0:
-            backfill_rows = _backfill_candidates(db, remaining)
-            summary.backfilled = len(backfill_rows)
-
-        backfill_tasks = [
-            enrich(row, row.platform, _fetch_detail_for(row.platform), "backfill")
-            for row in backfill_rows[:remaining]
-        ]
-        if backfill_tasks:
-            await asyncio.gather(*backfill_tasks)
+        # 用戶要求：第二次 scan 起只有「新工」先入 LLM —— scan 期間唔再自動
+        # 補評舊工（慳 LLM 錢）。舊工要用 Dashboard「⇪ 補齊」掣 / 詳情頁 refresh
+        # 先會手動補。（_backfill_candidates 保留畀嗰啲手動流程用。）
 
     set_progress("", "done", 0)
     db.commit()
@@ -394,7 +395,9 @@ async def _fill_detail(db: Session, row: JobApplication, fetch_detail,
     if draft.posted_at:
         row.posted_at = draft.posted_at
         row.posted_date = parse_posted_date(draft.posted_at)
-        max_age = settings.MAX_JOB_AGE_DAYS
+        # 大灣區 60 日；其他渠道 14 日（淨係收附近嘅新工）
+        max_age = (settings.GBAY_MAX_JOB_AGE_DAYS if row.platform == "govhk_gbayes"
+                   else settings.MAX_JOB_AGE_DAYS)
         if max_age > 0 and not is_fresh(draft.posted_at, max_age):
             log.info("dropping stale job %s/%s after detail fetch (posted %r, >%sd old)",
                      row.platform, row.job_id_on_platform, draft.posted_at, max_age)

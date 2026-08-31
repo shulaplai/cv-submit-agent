@@ -35,10 +35,15 @@ DATEPOSTED_RE = re.compile(r'"datePosted"\s*:\s*"(\d{4}-\d{2}-\d{2})"')
 
 
 def _search_urls_for(cfg: TrackConfig) -> list[str]:
-    """Per-track search URLs: IT uses the category pages; general uses keyword
-    searches (at most cfg.max_searches of them)."""
+    """Per-track search URLs.
+
+    IT: the 3 category pages PLUS extra keyword searches (AI Agent 等 —
+    cfg.offertoday_search_terms, at most cfg.max_searches of them).
+    general: keyword searches only (at most cfg.max_searches of them).
+    """
     if cfg.name == "it":
-        return list(SEARCH_URLS)
+        terms = (cfg.offertoday_search_terms or [])[: cfg.max_searches or len(cfg.offertoday_search_terms or [])]
+        return list(SEARCH_URLS) + [f"{BASE}/hk/search/{quote(term)}-jobs" for term in terms]
     terms = (cfg.offertoday_search_terms or cfg.keywords)[: cfg.max_searches or len(cfg.keywords)]
     return [f"{BASE}/hk/search/{quote(term)}-jobs" for term in terms]
 

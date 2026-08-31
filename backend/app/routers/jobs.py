@@ -346,7 +346,7 @@ async def refresh_job(job_id: int, db: Session = Depends(get_db)):
             if max_age > 0 and not is_fresh(draft.posted_at, max_age):
                 # 手動 refresh：唔刪你撳緊嗰份工，改為標記過期（隱藏出主頁）
                 row.status = "low_match"
-                row.match_reason = "刊登日期已超過兩個月，已過期"
+                row.match_reason = f"刊登日期已超過 {max_age} 日，已過期"
                 db.commit()
                 db.refresh(row)
                 return row

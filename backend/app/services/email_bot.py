@@ -16,6 +16,7 @@ from pathlib import Path
 
 from ..config import settings
 from ..models import JobApplication
+from .cl_generator import polish_cl_for_email
 
 log = logging.getLogger(__name__)
 
@@ -178,6 +179,30 @@ def _url_quote(text: str) -> str:
     return urllib.parse.quote(text)
 
 
+def _save_polished_cl(row: JobApplication, cl_text: str) -> None:
+    """Save the polished letter as a NEW CL version (reviewable in history).
+
+    Best-effort: a failure here never blocks the email flow.
+    """
+    from ..db import SessionLocal
+    from ..models import CoverLetter
+    try:
+        db = SessionLocal()
+        try:
+            latest = (db.query(CoverLetter)
+                      .filter_by(application_id=row.id)
+                      .order_by(CoverLetter.version.desc()).first())
+            db.add(CoverLetter(application_id=row.id,
+                               language=row.jd_language or "zh",
+                               content=cl_text,
+                               version=(latest.version + 1 if latest else 1)))
+            db.commit()
+        finally:
+            db.close()
+    except Exception:  # noqa: BLE001
+        log.warning("saving polished CL failed for job %s", getattr(row, "id", "?"))
+
+
 async def open_email_compose(row: JobApplication, cl_text: str, send: bool = False,
                              template_key: str = "standard") -> dict:
     """Top-level entry from apply_bot: compose + open Mail (or send it).
@@ -185,8 +210,23 @@ async def open_email_compose(row: JobApplication, cl_text: str, send: bool = Fal
     send=True -> create the message, attach CV and SEND immediately via Mail
     (uses the user's own Mail account; no SMTP credentials needed).
     send=False -> open a pre-filled draft for the user to review (semi-auto).
+
+    Before composing, the cover letter gets ONE final AI polish pass (smoother
+    wording + tailored to this job); the polished version is saved as a new CL
+    version. If the polish call fails, the original letter is used unchanged.
     """
     from .cv_loader import resolve_cv_path
+
+    # 發送前最後一執：AI 潤飾 CL（通順 + 貼合呢份工）。失敗就照用原文。
+    if cl_text and cl_text.strip():
+        try:
+            polished = await polish_cl_for_email(row, cl_text, row.jd_language or "zh")
+            if polished and polished.strip():
+                cl_text = polished.strip()
+                _save_polished_cl(row, cl_text)
+        except Exception as e:  # noqa: BLE001 — 潤飾失敗唔阻礙發送
+            log.warning("CL polish failed for %s/%s: %s",
+                        getattr(row, "platform", "?"), getattr(row, "id", "?"), e)
 
     # Attach the CV matching the JD language; fall back to the other language.
     cv_path = resolve_cv_path(row.jd_language) or resolve_cv_path("zh" if row.jd_language == "en" else "en")

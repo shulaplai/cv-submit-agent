@@ -345,6 +345,95 @@ def test_gbayes_stops_at_stale(monkeypatch):
     assert drafts[0].job_id == "21-26-0008159"
 
 
+def test_gbayes_keeps_all_categories(monkeypatch):
+    """大灣區計劃：IT + 一般全部攞（唔再淨係 IT），逐份按職位分類。"""
+    import asyncio
+    from pathlib import Path
+
+    from app.config import settings
+    from app.services import scraper_govhk
+    from app.services.classify import TrackConfig
+    from app.services.scraper_base import JobDraft
+
+    monkeypatch.setattr(settings, "GBAY_MAX_JOB_AGE_DAYS", 60)
+    fixture = (Path(__file__).parent / "fixtures" / "govhk_quickview_general.html").read_text(encoding="utf-8")
+
+    class FakePage:
+        async def close(self):
+            pass
+
+    async def fake_open_page(ctx, url):
+        return FakePage()
+
+    async def fake_grab_html(page):
+        return fixture
+
+    async def fake_fetch_detail(session, item, platform, category=""):
+        return JobDraft(platform=platform, job_id=item["job_id"],
+                        title=item["title"], posted_at="01/08/2026",
+                        category=category)
+
+    async def fake_human_delay(*a, **k):
+        pass
+
+    monkeypatch.setattr(scraper_govhk, "open_page", fake_open_page)
+    monkeypatch.setattr(scraper_govhk, "grab_html", fake_grab_html)
+    monkeypatch.setattr(scraper_govhk, "_fetch_detail", fake_fetch_detail)
+    monkeypatch.setattr(scraper_govhk, "human_delay", fake_human_delay)
+
+    class FakeSession:
+        context = object()
+
+    cfg = TrackConfig.defaults("it")
+    drafts = asyncio.run(scraper_govhk._scrape_gbayes(FakeSession(), set(), cfg))
+    by_title = {d.title: d.category for d in drafts}
+    assert set(by_title) == {"文員", "行政助理", "資訊科技工程師"}
+    assert by_title["文員"] == "general"           # 一般工都要攞
+    assert by_title["行政助理"] == "general"
+    assert by_title["資訊科技工程師"] == "it"
+
+
+def test_run_scan_gbayes_uses_60day_window_others_14(db, monkeypatch):
+    """大灣區用 60 日窗口；其他渠道 14 日（淨係收刊登日期喺附近嘅新工）。"""
+    import asyncio
+    from datetime import date, timedelta
+
+    from app.config import settings
+    from app.models import JobApplication
+    from app.services import scanner
+    from app.services.scraper_base import JobDraft
+
+    monkeypatch.setattr(settings, "MAX_JOB_AGE_DAYS", 14)
+    monkeypatch.setattr(settings, "GBAY_MAX_JOB_AGE_DAYS", 60)
+    monkeypatch.setattr(settings, "MAX_ENRICH_PER_SCAN", 0)
+
+    mid = (date.today() - timedelta(days=45)).strftime("%d/%m/%Y")  # 45 日：>14 但 <60
+
+    gba = JobDraft(platform="govhk_gbayes", job_id="21-26-0009101",
+                   title="AI 工程師", posted_at=mid)
+    it = JobDraft(platform="govhk_it", job_id="31-26-0009102",
+                  title="AI 工程師", posted_at=mid)
+    ot = JobDraft(platform="offertoday", job_id="tokMid",
+                  title="AI Developer", posted_at="")  # 冇日期 -> 照收
+
+    async def fake_scrape(session, track="it", cfg=None):
+        return [gba, it, ot]
+
+    async def fake_get_browser(platform):
+        return object()
+
+    monkeypatch.setattr(scanner, "PLATFORM_SCRAPERS",
+                        (("govhk", fake_scrape, None),))
+    monkeypatch.setattr(scanner, "get_browser", fake_get_browser)
+
+    summary = asyncio.run(scanner.run_scan(db, {}, track="it"))
+    ids = {r.job_id_on_platform for r in db.query(JobApplication).all()}
+    assert "21-26-0009101" in ids      # 大灣區 45 日 -> 60 日窗口內，收
+    assert "31-26-0009102" not in ids  # 其他渠道 45 日 -> 14 日窗口外，drop
+    assert "tokMid" in ids             # 冇刊登日期 -> 照收
+    assert summary.skipped_old == 1
+
+
 def test_gbayes_keeps_scanning_while_fresh(monkeypatch):
     """While postings are fresh the channel keeps going to later pages."""
     import asyncio
@@ -479,10 +568,13 @@ def test_offertoday_caps_per_search(monkeypatch):
         async def close(self):
             pass
 
-    # 60 links per search; tokens unique per search URL so the shared seen-set
+    # per-search cap links; tokens unique per search URL so the shared seen-set
     # doesn't hide the per-search cap
+    from app.config import settings as _settings
+    cap = _settings.OFFERTODAY_MAX_PER_SEARCH
+
     def make_links(search_idx):
-        return [FakeLink(f"tok{search_idx}_{i}", "AI Developer") for i in range(60)]
+        return [FakeLink(f"tok{search_idx}_{i}", "AI Developer") for i in range(cap + 20)]
 
     async def fake_open_page(ctx, url):
         idx = scraper_offertoday.SEARCH_URLS.index(url)
@@ -502,8 +594,6 @@ def test_offertoday_caps_per_search(monkeypatch):
         context = object()
 
     drafts = asyncio.run(scraper_offertoday.scrape(FakeSession()))
-    from app.config import settings
-    cap = settings.OFFERTODAY_MAX_PER_SEARCH
     assert cap > 0
     assert len(drafts) == cap * len(scraper_offertoday.SEARCH_URLS)
     # all tokens unique across searches

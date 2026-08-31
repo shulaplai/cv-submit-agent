@@ -115,3 +115,57 @@ async def generate_cl_checked(cv_text: str, jd: str, job: dict, language: str,
     if not problems2 or len(retry) >= len(content):
         return retry, ("" if not problems2 else f"CL 質素提示：{'；'.join(problems2)}")
     return content, f"CL 質素提示：{'；'.join(problems)}"
+
+
+# ------------------------------------------------------------------ send-time polish
+
+def _polish_system(language: str) -> str:
+    if language == "zh":
+        return (
+            "你係一位專業求職信編輯。用戶會俾一封已寫好嘅求職信同職位資料。"
+            "請將封信潤飾得更加通順自然、語氣專業，並微調內容令佢更貼合呢份工"
+            "（例如呼應 JD 嘅職責／要求）。"
+            "鐵律：只可以改措辭、調整重點次序，絕對唔准加新事實、唔准誇大，"
+            "亦唔可以刪走原有重要內容。直接輸出潤飾後嘅完整求職信，唔好加任何解釋。"
+        )
+    return (
+        "You are a professional cover-letter editor. The user gives you a "
+        "finished cover letter and the job details. Polish the wording so it "
+        "reads naturally and professionally, and tailor it slightly to this "
+        "specific job (e.g. echo the JD's duties/requirements). "
+        "IRON RULE: only rephrase and re-order emphasis — never add new facts, "
+        "never exaggerate, never drop important content. "
+        "Output only the polished letter, no commentary."
+    )
+
+
+def _polish_user(language: str, cl_text: str, job: dict, jd: str) -> str:
+    if language == "zh":
+        return (
+            f"職位：{job.get('title', '')}\n公司：{job.get('company', '')}\n"
+            f"職位描述（供微調參考）：\n{jd[:2000]}\n\n"
+            f"現有求職信：\n{cl_text[:4000]}\n\n請潤飾並輸出完整求職信。"
+        )
+    return (
+        f"Job: {job.get('title', '')}\nCompany: {job.get('company', '')}\n"
+        f"Job description (for tailoring):\n{jd[:2000]}\n\n"
+        f"Current cover letter:\n{cl_text[:4000]}\n\n"
+        "Polish it and output the full letter."
+    )
+
+
+async def polish_cl_for_email(row, cl_text: str, language: str) -> str:
+    """One final AI pass right before an email goes out: smoother wording +
+    tailored to this specific job. Returns the polished letter.
+
+    Raises LLMError on total failure — callers fall back to the original text
+    so a polish failure never blocks sending.
+    """
+    jd = getattr(row, "jd_text", "") or ""
+    job = {"title": getattr(row, "title", "") or "",
+           "company": getattr(row, "company", "") or ""}
+    messages = [
+        {"role": "system", "content": _polish_system(language)},
+        {"role": "user", "content": _polish_user(language, cl_text, job, jd)},
+    ]
+    return (await llm_svc.chat(messages, temperature=0.5)).strip()

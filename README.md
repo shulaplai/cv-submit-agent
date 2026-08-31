@@ -9,12 +9,12 @@
 - 🕷️ **雙軌掃描（IT / 一般職位）**：每份工分類入 **IT**（AI／程式／技術）或 **一般**（文職、行政、客戶服務等非 IT）track，職位台分「**IT 職位**」同「**一般職位**」兩頁顯示。側邊欄「立即掃描」預設掃晒兩個 track（設定頁可逐個開關），亦可以揀「**淨掃描：IT**」或「**淨掃描：一般**」。每次掃描喺側邊欄分開顯示兩個 track 嘅結果（新/掃到/過期）
   - **IT track**：OfferToday 三個技術分類（資訊科技／工程師／科技，每分類每次上限可設）、gov.hk **大灣區青年就業計劃**（`govhk_gbayes`，刊登日期限 30 日）＋**資訊及科技界**（`govhk_it`，每次上限可設）
   - **一般 track**：OfferToday 關鍵字搜尋（`<關鍵字>-jobs`，每個字詞一個搜尋頁）、gov.hk **主 quickview**（`govhk_general`，全部職位類別，由新到舊，過濾一般關鍵字）
-  - **每 2 日夜晚 23:00 自動掃描**（`.env` 可改：`SCAN_HOUR` / `SCAN_DAY_INTERVAL`），起機唔會自動補掃
-- 📅 **OfferToday 都有刊登日期喇**：OfferToday 詳情頁內嵌 JSON-LD（`datePosted`），`fetch_detail` 會抽返出嚟做刊登日期，過期兩個月嘅 OfferToday 工一樣會喺補齊/刷新後被過濾
+  - **每 2 日夜晚 19:00（7 點）自動掃描**（`.env` 可改：`SCAN_HOUR` / `SCAN_DAY_INTERVAL`），起機唔會自動補掃
+- 📅 **OfferToday 都有刊登日期喇**：OfferToday 詳情頁內嵌 JSON-LD（`datePosted`），`fetch_detail` 會抽返出嚟做刊登日期，過期（超過期限）嘅 OfferToday 工一樣會喺補齊/刷新後被過濾
 - ✍️ **Cover Letter 自動生成**：跟 JD 語言（英文 JD → 英文 CL；中文 JD → 繁中 CL），只可用 CV 事實（唔吹噓），UI 可編輯，每次儲存開新版本（歷史保留）；生成後自動驗證語言/長度，唔啱會重試一次
 - 📄 **全部工都會有 JD**：每次掃描會為「所有新入庫嘅工」攞埋完整 JD（唔使 LLM，順便抽埋 OfferToday 刊登日期），再為最多 20 份最舊未補嘅工補 JD（`DETAIL_BACKFILL_PER_SCAN`）——個職位台會逐步全部有職位介紹，唔再淨係頭 30 份先有
 - 🎯 **Match Score 過濾**：LLM 評分 0–100 + 理由；低分預設隱藏；**每次掃描設 LLM 預算**（預設 30 份，慳 API 錢），未處理嘅用「補齊」按鈕處理
-- 📅 **新工時效過濾**：掃描時自動略過刊登日期超過期限嘅職位——**gov.hk 大灣區**（`govhk_gbayes`）限 **30 日（一個月）**，**其餘全部（gov.hk 資訊及科技界／一般、JobsDB、OfferToday）限 60 日（兩個月）**；冇刊登日期嘅照保留。**gov.hk 列表係「由近至遠」排**，一掃到過期工就即刻停成個渠道。設定：`.env` `GBAY_MAX_JOB_AGE_DAYS`、`MAX_JOB_AGE_DAYS`（0 = 唔過濾）
+- 📅 **新工時效過濾**：掃描時自動略過刊登日期超過期限嘅職位——**gov.hk 大灣區**（`govhk_gbayes`）限 **60 日（兩個月）**，**其餘全部（gov.hk 資訊及科技界／一般、JobsDB、OfferToday）限 14 日（兩星期，淨係收附近嘅新工）**；冇刊登日期嘅照保留。**gov.hk 列表係「由近至遠」排**，一掃到過期工就即刻停成個渠道。設定：`.env` `GBAY_MAX_JOB_AGE_DAYS`、`MAX_JOB_AGE_DAYS`（0 = 唔過濾）
 - 🔢 **渠道上限（每個 track 獨立）**：**gov.hk 資訊及科技界每次頭 50 份**（`GOVHK_IT_MAX_JOBS`）、**gov.hk 一般每次頭 20 份**（`GOVHK_GENERAL_MAX_JOBS`）、**OfferToday IT 每個分類每次頭 40 份**（`OFFERTODAY_MAX_PER_SEARCH`）、**OfferToday 一般每個關鍵字搜尋每次頭 15 份**（`OFFERTODAY_GENERAL_MAX_PER_SEARCH`，每次最多 8 個搜尋字詞）。全部渠道一齊入庫，入庫時同平台同 job id 已存在就自動 skip（去重）。可選總上限 `MAX_SCAN_JOBS`（每個 track 各自適用；0 = 冇）
 - ⏸ **暫停掣**：scan 進行緊時撳側邊欄「⏸ 暫停」即刻中斷（track／平台／頁之間都檢查），**已掃到嘅內容照樣入庫**，未掃嘅唔會再掃，LLM 步驟（match/CL）亦會跳過，下次 scan 先補
 - 🖥️ **自動投遞（預設開）**：撳「申請」會自己填 CL + 上傳/揀 CV 並**直接撳提交**；gov.hk 用 macOS Mail **自動發送 email**（用你自己 Mail account，唔使 SMTP）。完成會自動記錄「已投遞」。Email 內文／主旨／CV 都會跟 JD 語言（中文 JD → 中文 email，英文 JD → 英文 email），而且發送前可揀 **Email 模板**（標準／簡潔／正式／直接）預覽後先發。

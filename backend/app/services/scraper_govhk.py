@@ -4,6 +4,8 @@
     1. 大灣區青年就業計劃 — server-rendered quickview list:
          list:   /0/tc/jobseeker/jobsearch/quickview/gbayes/?page=N
          detail: /0/tc/jobseeker/jobCard/?order=<token>&from=quickview&for=gbayes
+       KEEPS ALL vacancies (IT + 一般, each tagged by its title classification);
+       posting-date window is 2 months (GBAY_MAX_JOB_AGE_DAYS).
     2. 資訊及科技界 — the 「電腦及資訊科技」 vacancy category
        (Criteria.jobType=5). The search is a POST to /jobsearch/simple/ that
        stashes the criteria in a session cookie and 302s to
@@ -240,7 +242,8 @@ async def scrape(session: BrowserSession, track: str = "it",
                  cfg: TrackConfig | None = None) -> list[JobDraft]:
     """Scrape the gov.hk channels for one job track.
 
-    - IT track: 大灣區 quickview (30-day window) + 資訊及科技界 category (cap).
+    - IT track: 大灣區 quickview (ALL vacancies, IT + 一般, 2-month window)
+      + 資訊及科技界 category (cap).
     - general track: main quickview (all categories) filtered by the general
       keywords, excluding IT-classified titles.
     """
@@ -256,7 +259,13 @@ async def scrape(session: BrowserSession, track: str = "it",
 
 async def _scrape_gbayes(session: BrowserSession, seen: set[str],
                          cfg: TrackConfig | None = None) -> list[JobDraft]:
-    """大灣區青年就業計劃: quickview pages; keep IT-keyword titles only."""
+    """大灣區青年就業計劃: quickview pages — KEEP ALL vacancies (IT + 一般).
+
+    No IT keyword filter: every GBA job is fetched and tagged by its title
+    classification (it / general). Posting-date window is 2 months
+    (GBAY_MAX_JOB_AGE_DAYS); the list is sorted newest-first so the first job
+    older than the window stops the channel.
+    """
     cfg = cfg or TrackConfig.defaults("it")
     drafts: list[JobDraft] = []
 
@@ -275,12 +284,13 @@ async def _scrape_gbayes(session: BrowserSession, seen: set[str],
         items = parse_list_html(page_html)
         if not items:
             break  # past the last page
-        matches = [it for it in items if it["job_id"] and it["job_id"] not in seen
-                   and title_matches(it["title"], cfg.keywords)]
-        for it in matches:
+        for it in items:
+            if not it["job_id"] or it["job_id"] in seen:
+                continue
             seen.add(it["job_id"])
-            drafts.append(await _fetch_detail(session, it, GBY_PLATFORM, "it"))
-            # 大灣區：刊登日期要喺一個月（30日）之內；
+            category = classify(it["title"], cfg.it_keywords)
+            drafts.append(await _fetch_detail(session, it, GBY_PLATFORM, category))
+            # 大灣區：刊登日期要喺兩個月（60日）之內；
             # list is sorted newest-first: first stale job -> stop this channel
             if drafts and _too_old(drafts[-1].posted_at, settings.GBAY_MAX_JOB_AGE_DAYS):
                 log.info("govhk gbayes: reached posting-date window (%s), stopping channel",
@@ -290,7 +300,7 @@ async def _scrape_gbayes(session: BrowserSession, seen: set[str],
                 log.info("govhk gbayes: stop requested mid-item — returning partial drafts")
                 return drafts
         if page_no % 5 == 0:
-            log.info("govhk gbayes page %s: %s new matches, %s drafts so far", page_no, len(matches), len(drafts))
+            log.info("govhk gbayes page %s: %s items, %s drafts so far", page_no, len(items), len(drafts))
         await human_delay(0.5, 1.2)
 
     return drafts

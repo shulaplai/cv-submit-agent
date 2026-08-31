@@ -79,6 +79,27 @@ def test_offertoday_fetch_detail_keeps_empty_when_no_jsonld(monkeypatch):
 
 # ------------------------------------------------------------ OfferToday 一般 track
 
+def test_offertoday_it_track_adds_keyword_searches():
+    """IT track: 3 個分類頁 + 額外關鍵字搜尋（AI agent 等）。"""
+    from urllib.parse import quote
+
+    from app.services import scraper_offertoday
+
+    cfg = TrackConfig.defaults("it")
+    cfg.offertoday_search_terms = ["AI Agent", "人工智能"]
+    cfg.max_searches = 4
+
+    urls = scraper_offertoday._search_urls_for(cfg)
+    assert len(urls) == 3 + 2
+    assert urls[0] == scraper_offertoday.SEARCH_URLS[0]
+    assert "AI%20Agent-jobs" in urls[3]      # quote("AI Agent") -> AI%20Agent
+    assert quote("人工智能") in urls[4]       # 中文 -> percent-encoded
+
+    # 冇 terms -> 淨係分類頁
+    cfg.offertoday_search_terms = []
+    assert len(scraper_offertoday._search_urls_for(cfg)) == 3
+
+
 def test_offertoday_general_track_keyword_search(monkeypatch):
     """一般 track searches <kw>-jobs pages and keeps only general-classified titles."""
     from app.services import scraper_offertoday
@@ -169,7 +190,7 @@ def test_govhk_general_channel_filters_and_caps(monkeypatch):
 
     async def fake_fetch_detail(session, item, platform, category=""):
         return JobDraft(platform=platform, job_id=item["job_id"],
-                        title=item["title"], posted_at="01/08/2026",
+                        title=item["title"], posted_at="30/08/2026",
                         category=category)
 
     async def fake_human_delay(*a, **k):
@@ -211,7 +232,7 @@ def test_govhk_general_channel_caps_at_limit(monkeypatch):
 
     async def fake_fetch_detail(session, item, platform, category=""):
         return JobDraft(platform=platform, job_id=item["job_id"],
-                        title=item["title"], posted_at="01/08/2026",
+                        title=item["title"], posted_at="30/08/2026",
                         category=category)
 
     async def fake_human_delay(*a, **k):
@@ -307,6 +328,7 @@ def test_run_scan_fetches_detail_for_all_new_rows(db, monkeypatch):
 
     monkeypatch.setattr(settings, "MAX_JOB_AGE_DAYS", 60)
     monkeypatch.setattr(settings, "MAX_ENRICH_PER_SCAN", 1)   # LLM budget = 1
+    monkeypatch.setattr(settings, "ENRICH_ALL_IT", False)     # 呢個測試驗證 budget 上限
     monkeypatch.setattr(settings, "MAX_SCAN_JOBS", 0)
     monkeypatch.setattr(settings, "MATCH_THRESHOLD", 90)      # all LLM-scored -> low_match (no CL)
 
@@ -343,6 +365,57 @@ def test_run_scan_fetches_detail_for_all_new_rows(db, monkeypatch):
     assert len(rows) == 3
     assert all(r.jd_text for r in rows)          # every row carries a JD
     assert all(r.posted_at == "2026-08-01" for r in rows)
+
+
+def test_run_scan_enriches_all_it_rows(db, monkeypatch):
+    """ENRICH_ALL_IT: 所有新 IT 工都 LLM 完整評分（唔限）；一般工維持 top-N。"""
+    import asyncio
+
+    from app.config import settings
+    from app.models import JobApplication
+    from app.services import scanner
+    from app.services.scraper_base import JobDraft
+
+    monkeypatch.setattr(settings, "MAX_JOB_AGE_DAYS", 60)
+    monkeypatch.setattr(settings, "MAX_ENRICH_PER_SCAN", 2)   # 細 budget
+    monkeypatch.setattr(settings, "ENRICH_ALL_IT", True)
+    monkeypatch.setattr(settings, "MATCH_THRESHOLD", 90)      # all -> low_match (no CL)
+    monkeypatch.setattr(settings, "SCAN_JOB_DELAY_SECONDS", 0)
+
+    drafts = [JobDraft(platform="offertoday", job_id=f"it{i}",
+                       title="AI Developer", posted_at="", category="it") for i in range(5)]
+    drafts += [JobDraft(platform="offertoday", job_id=f"gen{i}",
+                        title="文員", posted_at="", category="general") for i in range(3)]
+
+    async def fake_scrape(session, track="it", cfg=None):
+        return drafts
+
+    async def fake_fetch_detail(session, d):
+        d.jd_text = f"職責：{d.title}"
+        d.posted_at = "2026-08-01"
+        return d
+
+    async def fake_get_browser(platform):
+        return object()
+
+    async def fake_score_job(job_dict, skills):
+        return (30, "低分")
+
+    monkeypatch.setattr(scanner, "PLATFORM_SCRAPERS",
+                        (("offertoday", fake_scrape, fake_fetch_detail),))
+    monkeypatch.setattr(scanner, "get_browser", fake_get_browser)
+    monkeypatch.setattr(scanner, "score_job", fake_score_job)
+
+    summary = asyncio.run(scanner.run_scan(db, {}, track="it"))
+
+    rows = db.query(JobApplication).all()
+    it_rows = [r for r in rows if r.category == "it"]
+    gen_rows = [r for r in rows if r.category == "general"]
+    assert len(it_rows) == 5
+    assert all(r.match_reason == "低分" for r in it_rows)     # 全部 IT 都 LLM 評咗分
+    assert len(gen_rows) == 3
+    assert sum(1 for r in gen_rows if r.match_reason) <= 2    # 一般工維持 top-N（budget=2）
+    assert summary.enriched == 7
 
 
 def test_run_scan_detail_backfill_fills_old_rows(db, monkeypatch):

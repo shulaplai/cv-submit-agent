@@ -30,37 +30,49 @@ class Settings(BaseSettings):
     # --- Job targeting ---
     JOB_KEYWORDS: str = "AI Engineer,agent developer,AI developer,developer,programmer,frontend developer,資訊科技工程師,AI 工程師,AI基礎架構"
     MATCH_THRESHOLD: int = 50  # 0-100; below -> low_match (hidden by default)
-    # Scheduled scan: every SCAN_DAY_INTERVAL days at SCAN_HOUR (0 disables)
-    SCAN_HOUR: int = 23
+    # Scheduled scan: every SCAN_DAY_INTERVAL days at SCAN_HOUR (0 disables).
+    # 夜晚 7 點（香港時間）先開始掃描。
+    SCAN_HOUR: int = 19
     SCAN_DAY_INTERVAL: int = 2
     # LLM budget per scan: only the top-N (by keyword pre-score) new jobs get
     # full LLM match + CL; the rest are left for backfill / manual refresh.
     MAX_ENRICH_PER_SCAN: int = 30
+    # ENRICH_ALL_IT: every NEW IT-track job gets full LLM match + CL each scan
+    # (uncapped — the user's choice); 一般 jobs keep the MAX_ENRICH_PER_SCAN
+    # budget. Set false to fall back to the shared top-N budget for both tracks.
+    ENRICH_ALL_IT: bool = True
     # Politeness pacing: at least this many seconds between per-job page opens
     # during a scan (JD detail fetches + backfill). Protects the job sites from
     # request bursts (anti-WAF). The listing scrape keeps its own random human
     # delays on top. Set 0 to disable.
-    SCAN_JOB_DELAY_SECONDS: float = 3.0
+    SCAN_JOB_DELAY_SECONDS: float = 2.0
     # Every scan ALSO fetches the full JD for every new row (no LLM) plus up to
     # this many oldest rows still missing a JD (detail-only backfill), so the
     # whole board gradually carries a description. Set 0 to disable.
     DETAIL_BACKFILL_PER_SCAN: int = 20
-    # Only keep jobs whose posting date is within this many days (2 months).
-    # Applies to EVERY platform incl. gov.hk IT category (its DD/MM/YYYY
-    # posting date is checked against the scan day). Jobs with an unknown
-    # posting date (e.g. OfferToday list cards) are always kept. Set 0 to disable.
-    MAX_JOB_AGE_DAYS: int = 60
-    # gov.hk 大灣區青年就業計劃: posting date must be within 1 month (30 days).
-    GBAY_MAX_JOB_AGE_DAYS: int = 30
+    # Only keep jobs whose posting date is within this many days (2 weeks —
+    # 淨係收刊登日期喺附近嘅新工). Applies to every non-GBA platform (incl.
+    # gov.hk IT/general categories). Jobs with an unknown posting date (e.g.
+    # OfferToday list cards) are kept until the detail fetch reveals the date.
+    # Set 0 to disable. (大灣區 gbayes 用 GBAY_MAX_JOB_AGE_DAYS=60。)
+    MAX_JOB_AGE_DAYS: int = 14
+    # gov.hk 大灣區青年就業計劃: posting date must be within 2 months (60 days).
+    GBAY_MAX_JOB_AGE_DAYS: int = 60
     # gov.hk 資訊及科技界: only the first N jobs per scan (list is newest-first).
     GOVHK_IT_MAX_JOBS: int = 50
     # Optional global cap on total jobs kept per scan, per track
     # (fair-share round-robin across platforms within the track).
     # 0 = no global cap; per-channel caps govern.
     MAX_SCAN_JOBS: int = 0
-    # OfferToday: each search result (資訊科技/工程師/科技) contributes at most
-    # this many drafts per scan. Set 0 for no cap.
-    OFFERTODAY_MAX_PER_SEARCH: int = 40
+    # OfferToday: each search result (資訊科技/工程師/科技 + keyword searches)
+    # contributes at most this many drafts per scan. Set 0 for no cap.
+    OFFERTODAY_MAX_PER_SEARCH: int = 80
+    # OfferToday IT track: extra keyword searches on top of the 3 category pages
+    # (e.g. "AI Agent,人工智能,大模型" — main focus is IT / AI agent jobs).
+    # Each term becomes one <term>-jobs search page. Empty -> category pages only.
+    OFFERTODAY_IT_SEARCH_TERMS: str = ""
+    # Max number of those extra IT keyword searches per scan.
+    OFFERTODAY_IT_MAX_SEARCHES: int = 4
     GOAL_APPLICATIONS_PER_WEEK: int = 15
     GOVHK_ENABLED: bool = True
     # JobsDB is hidden for now (semi-auto flow pending); set true to re-enable.

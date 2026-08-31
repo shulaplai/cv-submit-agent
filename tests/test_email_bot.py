@@ -141,3 +141,84 @@ def test_send_email_via_mail_failure_falls_to_draft(monkeypatch, tmp_path):
     assert result["submitted"] is False
     assert "自動發送" in result["message"]
     assert "Mail" in " ".join(calls["last"])
+
+
+def test_open_email_compose_polishes_and_saves_cl(monkeypatch, db):
+    """發送前 AI 潤飾 CL：body 用潤飾版，並儲存做新版本。"""
+    import asyncio
+
+    from app.models import CoverLetter, JobApplication
+    from app.services import email_bot
+
+    row = JobApplication(platform="govhk", job_id_on_platform="polish1",
+                         title="AI 工程師", company="測試公司", jd_language="zh",
+                         jd_text="職責：開發 AI 系統。", status="pending_review")
+    db.add(row)
+    db.flush()
+    db.add(CoverLetter(application_id=row.id, language="zh", content="原文 CL", version=1))
+    db.commit()
+
+    async def fake_polish(row, cl_text, language):
+        return "潤飾後嘅 CL（更通順、貼合呢份工）"
+
+    def fake_compose(email):
+        return True, "draft opened"
+
+    def fake_attach(cv_path):
+        return True, ""
+
+    monkeypatch.setattr(email_bot, "polish_cl_for_email", fake_polish)
+    monkeypatch.setattr(email_bot, "compose_in_mail", fake_compose)
+    monkeypatch.setattr(email_bot, "attach_cv_to_draft", fake_attach)
+    monkeypatch.setattr("app.services.cv_loader.resolve_cv_path", lambda lang: "")
+
+    result = asyncio.run(email_bot.open_email_compose(row, "原文 CL", send=False))
+    assert result["ok"] is True
+    assert "潤飾後嘅 CL" in result["preview"]["body"]
+
+    db.expire_all()
+    vers = (db.query(CoverLetter)
+            .filter_by(application_id=row.id)
+            .order_by(CoverLetter.version.desc()).all())
+    assert len(vers) == 2
+    assert vers[0].content == "潤飾後嘅 CL（更通順、貼合呢份工）"
+
+
+def test_open_email_compose_polish_failure_uses_original(monkeypatch, db):
+    """AI 潤飾失敗 -> 照用原文，唔會阻礙發送。"""
+    import asyncio
+
+    from app.models import CoverLetter, JobApplication
+    from app.services import email_bot
+
+    row = JobApplication(platform="govhk", job_id_on_platform="polish2",
+                         title="AI 工程師", company="測試公司", jd_language="zh",
+                         status="pending_review")
+    db.add(row)
+    db.flush()
+    db.add(CoverLetter(application_id=row.id, language="zh", content="原文 CL", version=1))
+    db.commit()
+
+    async def fake_polish(row, cl_text, language):
+        raise RuntimeError("LLM down")
+
+    def fake_compose(email):
+        return True, "draft opened"
+
+    def fake_attach(cv_path):
+        return True, ""
+
+    monkeypatch.setattr(email_bot, "polish_cl_for_email", fake_polish)
+    monkeypatch.setattr(email_bot, "compose_in_mail", fake_compose)
+    monkeypatch.setattr(email_bot, "attach_cv_to_draft", fake_attach)
+    monkeypatch.setattr("app.services.cv_loader.resolve_cv_path", lambda lang: "")
+
+    result = asyncio.run(email_bot.open_email_compose(row, "原文 CL", send=False))
+    assert result["ok"] is True
+    assert "原文 CL" in result["preview"]["body"]
+
+    db.expire_all()
+    vers = (db.query(CoverLetter)
+            .filter_by(application_id=row.id)
+            .order_by(CoverLetter.version.desc()).all())
+    assert len(vers) == 1   # 冇儲存新版本
