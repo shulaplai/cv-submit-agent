@@ -10,7 +10,8 @@ _TMP = tempfile.mkdtemp(prefix="cvsubmit_test_")
 os.environ["DB_PATH"] = os.path.join(_TMP, "test.db")
 os.environ["SCAN_DAY_INTERVAL"] = "0"  # no scheduler in tests
 os.environ["SCAN_HOUR"] = "23"
-os.environ["SCAN_JOB_DELAY_SECONDS"] = "0"  # no politeness pacing in tests
+os.environ["SCAN_JOB_DELAY_MIN_SECONDS"] = "0"  # no politeness pacing in tests
+os.environ["SCAN_JOB_DELAY_MAX_SECONDS"] = "0"
 os.environ["LLM_API_KEY"] = ""
 os.environ["LLM_FALLBACK_API_KEY"] = ""
 

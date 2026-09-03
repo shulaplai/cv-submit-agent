@@ -29,10 +29,10 @@ class Settings(BaseSettings):
 
     # --- Job targeting ---
     JOB_KEYWORDS: str = "AI Engineer,agent developer,AI developer,developer,programmer,frontend developer,資訊科技工程師,AI 工程師,AI基礎架構"
-    MATCH_THRESHOLD: int = 50  # 0-100; below -> low_match (hidden by default)
+    MATCH_THRESHOLD: int = 50  # 0-100; below -> low_match
     # Scheduled scan: every SCAN_DAY_INTERVAL days at SCAN_HOUR (0 disables).
-    # 夜晚 7 點（香港時間）先開始掃描。
-    SCAN_HOUR: int = 19
+    # 凌晨三點（香港時間）先開始掃描。
+    SCAN_HOUR: int = 3
     SCAN_DAY_INTERVAL: int = 2
     # LLM budget per scan: only the top-N (by keyword pre-score) new jobs get
     # full LLM match + CL; the rest are left for backfill / manual refresh.
@@ -41,11 +41,11 @@ class Settings(BaseSettings):
     # (uncapped — the user's choice); 一般 jobs keep the MAX_ENRICH_PER_SCAN
     # budget. Set false to fall back to the shared top-N budget for both tracks.
     ENRICH_ALL_IT: bool = True
-    # Politeness pacing: at least this many seconds between per-job page opens
-    # during a scan (JD detail fetches + backfill). Protects the job sites from
-    # request bursts (anti-WAF). The listing scrape keeps its own random human
-    # delays on top. Set 0 to disable.
-    SCAN_JOB_DELAY_SECONDS: float = 2.0
+    # Politeness pacing: 每份工之間隔至少 SCAN_JOB_DELAY_MIN_SECONDS 秒，
+    # 上限 SCAN_JOB_DELAY_MAX_SECONDS —— 每次 wait 隨機抽 4–6 秒（人類化、
+    # 唔好俾 OfferToday 嘅 anti-WAF 見到固定節奏）。0 = disable.
+    SCAN_JOB_DELAY_MIN_SECONDS: float = 4.0
+    SCAN_JOB_DELAY_MAX_SECONDS: float = 6.0
     # Every scan ALSO fetches the full JD for every new row (no LLM) plus up to
     # this many oldest rows still missing a JD (detail-only backfill), so the
     # whole board gradually carries a description. Set 0 to disable.

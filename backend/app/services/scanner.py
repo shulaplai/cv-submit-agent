@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import re
 from dataclasses import dataclass, field
 
@@ -52,13 +53,19 @@ class _PaceGate:
     """Guarantees a minimum interval between page opens (site politeness).
 
     Concurrent callers (the scan opens up to SEMAPHORE detail pages at once)
-    queue on an asyncio lock; each caller is released at least
-    ``min_interval`` seconds after the previous one, so the job site never
-    sees a burst of requests. Interval 0 = no pacing (tests / manual actions).
+    queue on an asyncio lock; each caller is released at least ``min_interval``
+    seconds after the previous one, so the job site never sees a burst of
+    requests. When ``max_interval`` > ``min_interval``, each caller's spacing is
+    drawn randomly from [min, max] (human-like, avoids a fixed scrape rhythm).
+    Interval 0 = no pacing (tests / manual actions).
     """
 
-    def __init__(self, min_interval: float):
+    def __init__(self, min_interval: float, max_interval: float | None = None):
         self.min_interval = max(0.0, min_interval)
+        self.max_interval = (max(0.0, max_interval)
+                             if max_interval is not None else self.min_interval)
+        if self.max_interval < self.min_interval:
+            self.max_interval = self.min_interval
         self._lock = asyncio.Lock()
         self._next_open = 0.0
 
@@ -71,7 +78,11 @@ class _PaceGate:
             if wait > 0:
                 await asyncio.sleep(wait)
             # re-read AFTER the sleep so consecutive callers stay spaced apart
-            self._next_open = asyncio.get_running_loop().time() + self.min_interval
+            now = asyncio.get_running_loop().time()
+            if self.max_interval > self.min_interval:
+                self._next_open = now + random.uniform(self.min_interval, self.max_interval)
+            else:
+                self._next_open = now + self.min_interval
 
 
 def make_dup_key(company: str, title: str) -> str:
@@ -281,10 +292,11 @@ async def run_scan(db: Session, progress: dict | None = None,
         # LLM-budget top-N. Detail fetch also reveals the OfferToday datePosted,
         # so stale jobs get dropped here like scan-time freshness filtering.
         sem = asyncio.Semaphore(6)
-        # Politeness: at least SCAN_JOB_DELAY_SECONDS between per-job page
-        # opens, shared across every phase of this scan (new rows, backfill,
-        # enrich). Concurrent tasks still overlap their parsing / LLM work.
-        pace = _PaceGate(settings.SCAN_JOB_DELAY_SECONDS)
+        # Politeness: 每份工之間隔至少 4 秒（隨機 4–6 秒），shared across
+        # every phase of this scan (new rows, backfill, enrich). OfferToday 最怕
+        # request burst（anti-WAF），所以唔好快過 4 秒。
+        pace = _PaceGate(settings.SCAN_JOB_DELAY_MIN_SECONDS,
+                         settings.SCAN_JOB_DELAY_MAX_SECONDS)
         dropped_ids: set[int] = set()
         dropped_by_track: dict[str, int] = {}
         fetch_count = {"n": 0}

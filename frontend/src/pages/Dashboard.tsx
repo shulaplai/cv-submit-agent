@@ -17,7 +17,7 @@ export function Dashboard({
   const [readyOnly, setReadyOnly] = useState(false);        // ⚡ 可以即刻投遞
   const [category, setCategory] = useState<"it" | "general" | "">("it");
   const [q, setQ] = useState("");
-  const [showAll, setShowAll] = useState(false);
+  const [showAll, setShowAll] = useState(true); // 預設顯示全部（包括低匹配工）
   const [sort, setSort] = useState("updated");
   const [addedFrom, setAddedFrom] = useState("");
   const [addedTo, setAddedTo] = useState("");
@@ -72,7 +72,7 @@ export function Dashboard({
     setPlatforms([]);
     setReadyOnly(false);
     setQ("");
-    setShowAll(false);
+    setShowAll(true); // 清除 filter 後回復「顯示全部（包括低匹配）」
     setSort("updated");
     setAddedFrom("");
     setAddedTo("");
@@ -261,6 +261,7 @@ export function Dashboard({
             ["interviewing", "面試中"],
             ["needs_manual_intervention", "需介入"],
             ["failed", "失敗"],
+            ["low_match", "低匹配"],
           ] as const
         ).map(([s, label]) => (
           <button
@@ -413,7 +414,7 @@ export function Dashboard({
           <input type="checkbox" checked={hasCl} onChange={(e) => setHasCl(e.target.checked)} />
           有 CL
         </label>
-        <label className="toggle-low">
+        <label className="toggle-low" title="預設顯示全部（包括低匹配）；唔勾就隱藏低匹配工">
           <input
             type="checkbox"
             checked={showAll}

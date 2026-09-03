@@ -103,7 +103,8 @@ def _apply_filters(query, *, statuses=None, platforms=None, category=None, q="",
         query = query.filter(JobApplication.platform.in_(platforms))
     if category in ("it", "general"):
         query = query.filter(JobApplication.category == category)
-    if not show_all:
+    # 低匹配工預設隱藏；但若用戶明確篩選 low_match 就唔好再排除（否則會出空列表）
+    if not show_all and (not statuses or "low_match" not in statuses):
         query = query.filter(JobApplication.status != "low_match")
     if q:
         like = f"%{q}%"
@@ -193,10 +194,11 @@ def list_jobs(status: str | None = None, platform: str | None = None,
     if order is None:
         raise HTTPException(status_code=400, detail=f"sort 必須係 updated/created/posted/match")
     total = query.count()
+    # 低匹配總數（永遠回報，畀前端顯示「顯示低匹配 (N)」同 pager 提示）
     hidden_q = db.query(JobApplication).filter(JobApplication.status == "low_match")
     if not settings.JOBSDB_ENABLED:
         hidden_q = hidden_q.filter(JobApplication.platform != "jobsdb")
-    hidden = hidden_q.count() if not show_all else 0
+    hidden = hidden_q.count()
     rows = (query.order_by(*order)
             .offset(offset).limit(limit)
             .options(selectinload(JobApplication.cover_letters)).all())

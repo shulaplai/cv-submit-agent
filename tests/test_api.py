@@ -88,6 +88,34 @@ def test_low_match_hidden_by_default(client, db):
     assert any(j["title"] == "低分工" for j in r.json()["items"])
 
 
+def test_status_filter_low_match_shows_rows_without_show_all(client, db):
+    """明確篩選 status=low_match 時，唔會被預設隱藏規則再排除。"""
+    from app.models import JobApplication
+
+    row = JobApplication(platform="offertoday", job_id_on_platform="999997",
+                         title="低分工專睇", status="low_match", match_score=20)
+    db.add(row)
+    db.commit()
+
+    r = client.get("/api/jobs?status=low_match")
+    assert r.status_code == 200
+    assert any(j["title"] == "低分工專睇" for j in r.json()["items"])
+
+
+def test_hidden_low_match_count_always_reported(client, db):
+    """hidden_low_match 永遠回報低匹配總數，畀前端顯示「顯示低匹配 (N)」。"""
+    from app.models import JobApplication
+
+    row = JobApplication(platform="offertoday", job_id_on_platform="999996",
+                         title="低分工三", status="low_match", match_score=20)
+    db.add(row)
+    db.commit()
+
+    r = client.get("/api/jobs?show_all=true")
+    assert r.status_code == 200
+    assert r.json()["hidden_low_match"] >= 1
+
+
 def test_jobsdb_hidden_by_default(client, db):
     from app.models import JobApplication
 

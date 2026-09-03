@@ -380,7 +380,8 @@ def test_run_scan_enriches_all_it_rows(db, monkeypatch):
     monkeypatch.setattr(settings, "MAX_ENRICH_PER_SCAN", 2)   # 細 budget
     monkeypatch.setattr(settings, "ENRICH_ALL_IT", True)
     monkeypatch.setattr(settings, "MATCH_THRESHOLD", 90)      # all -> low_match (no CL)
-    monkeypatch.setattr(settings, "SCAN_JOB_DELAY_SECONDS", 0)
+    monkeypatch.setattr(settings, "SCAN_JOB_DELAY_MIN_SECONDS", 0)
+    monkeypatch.setattr(settings, "SCAN_JOB_DELAY_MAX_SECONDS", 0)
 
     drafts = [JobDraft(platform="offertoday", job_id=f"it{i}",
                        title="AI Developer", posted_at="", category="it") for i in range(5)]
