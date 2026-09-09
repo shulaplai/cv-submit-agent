@@ -154,7 +154,7 @@ export default function App() {
                 {scan.last.skipped_old > 0 && (
                   <>
                     <br />
-                    過期（超過兩個月）已略過 {scan.last.skipped_old} 份
+                    過期（超過期限：一般 14 日、大灣區 7 日）已略過 {scan.last.skipped_old} 份
                   </>
                 )}
                 {scan.last.capped > 0 && (

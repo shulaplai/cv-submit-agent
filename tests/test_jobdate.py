@@ -8,6 +8,11 @@ from app.services import scan_control
 from app.services.jobdate import is_fresh, parse_posted_date
 from app.services.scraper_base import JobDraft
 
+# 時間免疫嘅測試日期（相對今日計）：
+FRESH_D = (date.today() - timedelta(days=1)).strftime("%d/%m/%Y")   # 1 日前：任何窗口都新鮮
+STALE_D = (date.today() - timedelta(days=30)).strftime("%d/%m/%Y")  # 30 日前：7/14/60 窗口都過期
+MID_D = (date.today() - timedelta(days=10)).strftime("%d/%m/%Y")    # 10 日前：>7（大灣區）但 <14
+
 
 def test_scan_control_flag():
     scan_control.clear_stop()
@@ -307,7 +312,7 @@ def test_gbayes_stops_at_stale(monkeypatch):
     from app.services import scraper_govhk
     from app.services.scraper_base import JobDraft
 
-    monkeypatch.setattr(settings, "MAX_JOB_AGE_DAYS", 60)
+    monkeypatch.setattr(settings, "GBAY_MAX_JOB_AGE_DAYS", 7)
     fixture = (Path(__file__).parent / "fixtures" / "govhk_page1.html").read_text(encoding="utf-8")
 
     class FakePage:
@@ -326,7 +331,7 @@ def test_gbayes_stops_at_stale(monkeypatch):
         fetch_count["n"] += 1
         # first match (資訊科技工程師) is stale -> channel must stop
         return JobDraft(platform=platform, job_id=item["job_id"],
-                        title=item["title"], posted_at="01/03/2026")
+                        title=item["title"], posted_at=STALE_D)
 
     async def fake_human_delay(*a, **k):
         pass
@@ -355,7 +360,7 @@ def test_gbayes_keeps_all_categories(monkeypatch):
     from app.services.classify import TrackConfig
     from app.services.scraper_base import JobDraft
 
-    monkeypatch.setattr(settings, "GBAY_MAX_JOB_AGE_DAYS", 60)
+    monkeypatch.setattr(settings, "GBAY_MAX_JOB_AGE_DAYS", 7)
     fixture = (Path(__file__).parent / "fixtures" / "govhk_quickview_general.html").read_text(encoding="utf-8")
 
     class FakePage:
@@ -370,7 +375,7 @@ def test_gbayes_keeps_all_categories(monkeypatch):
 
     async def fake_fetch_detail(session, item, platform, category=""):
         return JobDraft(platform=platform, job_id=item["job_id"],
-                        title=item["title"], posted_at="01/08/2026",
+                        title=item["title"], posted_at=FRESH_D,
                         category=category)
 
     async def fake_human_delay(*a, **k):
@@ -393,10 +398,9 @@ def test_gbayes_keeps_all_categories(monkeypatch):
     assert by_title["資訊科技工程師"] == "it"
 
 
-def test_run_scan_gbayes_uses_60day_window_others_14(db, monkeypatch):
-    """大灣區用 60 日窗口；其他渠道 14 日（淨係收刊登日期喺附近嘅新工）。"""
+def test_run_scan_gbayes_uses_7day_window_others_14(db, monkeypatch):
+    """大灣區用 7 日窗口；其他渠道 14 日（淨係收刊登日期喺附近嘅新工）。"""
     import asyncio
-    from datetime import date, timedelta
 
     from app.config import settings
     from app.models import JobApplication
@@ -404,10 +408,10 @@ def test_run_scan_gbayes_uses_60day_window_others_14(db, monkeypatch):
     from app.services.scraper_base import JobDraft
 
     monkeypatch.setattr(settings, "MAX_JOB_AGE_DAYS", 14)
-    monkeypatch.setattr(settings, "GBAY_MAX_JOB_AGE_DAYS", 60)
+    monkeypatch.setattr(settings, "GBAY_MAX_JOB_AGE_DAYS", 7)
     monkeypatch.setattr(settings, "MAX_ENRICH_PER_SCAN", 0)
 
-    mid = (date.today() - timedelta(days=45)).strftime("%d/%m/%Y")  # 45 日：>14 但 <60
+    mid = MID_D  # 10 日前：>7（大灣區過期）但 <14（其他渠道照收）
 
     gba = JobDraft(platform="govhk_gbayes", job_id="21-26-0009101",
                    title="AI 工程師", posted_at=mid)
@@ -428,8 +432,8 @@ def test_run_scan_gbayes_uses_60day_window_others_14(db, monkeypatch):
 
     summary = asyncio.run(scanner.run_scan(db, {}, track="it"))
     ids = {r.job_id_on_platform for r in db.query(JobApplication).all()}
-    assert "21-26-0009101" in ids      # 大灣區 45 日 -> 60 日窗口內，收
-    assert "31-26-0009102" not in ids  # 其他渠道 45 日 -> 14 日窗口外，drop
+    assert "21-26-0009101" not in ids  # 大灣區 10 日 -> 7 日窗口外，drop
+    assert "31-26-0009102" in ids      # 其他渠道 10 日 -> 14 日窗口內，收
     assert "tokMid" in ids             # 冇刊登日期 -> 照收
     assert summary.skipped_old == 1
 
@@ -443,7 +447,7 @@ def test_gbayes_keeps_scanning_while_fresh(monkeypatch):
     from app.services import scraper_govhk
     from app.services.scraper_base import JobDraft
 
-    monkeypatch.setattr(settings, "MAX_JOB_AGE_DAYS", 60)
+    monkeypatch.setattr(settings, "GBAY_MAX_JOB_AGE_DAYS", 7)
     fixture = (Path(__file__).parent / "fixtures" / "govhk_page1.html").read_text(encoding="utf-8")
 
     class FakePage:
@@ -461,7 +465,7 @@ def test_gbayes_keeps_scanning_while_fresh(monkeypatch):
 
     async def fake_fetch_detail(session, item, platform, category=""):
         return JobDraft(platform=platform, job_id=item["job_id"],
-                        title=item["title"], posted_at="01/08/2026")
+                        title=item["title"], posted_at=FRESH_D)
 
     async def fake_human_delay(*a, **k):
         pass

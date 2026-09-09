@@ -5,7 +5,7 @@
          list:   /0/tc/jobseeker/jobsearch/quickview/gbayes/?page=N
          detail: /0/tc/jobseeker/jobCard/?order=<token>&from=quickview&for=gbayes
        KEEPS ALL vacancies (IT + 一般, each tagged by its title classification);
-       posting-date window is 2 months (GBAY_MAX_JOB_AGE_DAYS).
+       posting-date window is 1 week (GBAY_MAX_JOB_AGE_DAYS).
     2. 資訊及科技界 — the 「電腦及資訊科技」 vacancy category
        (Criteria.jobType=5). The search is a POST to /jobsearch/simple/ that
        stashes the criteria in a session cookie and 302s to
@@ -262,7 +262,7 @@ async def _scrape_gbayes(session: BrowserSession, seen: set[str],
     """大灣區青年就業計劃: quickview pages — KEEP ALL vacancies (IT + 一般).
 
     No IT keyword filter: every GBA job is fetched and tagged by its title
-    classification (it / general). Posting-date window is 2 months
+    classification (it / general). Posting-date window is 1 week
     (GBAY_MAX_JOB_AGE_DAYS); the list is sorted newest-first so the first job
     older than the window stops the channel.
     """
@@ -290,7 +290,7 @@ async def _scrape_gbayes(session: BrowserSession, seen: set[str],
             seen.add(it["job_id"])
             category = classify(it["title"], cfg.it_keywords)
             drafts.append(await _fetch_detail(session, it, GBY_PLATFORM, category))
-            # 大灣區：刊登日期要喺兩個月（60日）之內；
+            # 大灣區：刊登日期要喺一個星期（7日）之內；
             # list is sorted newest-first: first stale job -> stop this channel
             if drafts and _too_old(drafts[-1].posted_at, settings.GBAY_MAX_JOB_AGE_DAYS):
                 log.info("govhk gbayes: reached posting-date window (%s), stopping channel",

@@ -54,10 +54,10 @@ class Settings(BaseSettings):
     # 淨係收刊登日期喺附近嘅新工). Applies to every non-GBA platform (incl.
     # gov.hk IT/general categories). Jobs with an unknown posting date (e.g.
     # OfferToday list cards) are kept until the detail fetch reveals the date.
-    # Set 0 to disable. (大灣區 gbayes 用 GBAY_MAX_JOB_AGE_DAYS=60。)
+    # Set 0 to disable. (大灣區 gbayes 用 GBAY_MAX_JOB_AGE_DAYS=7。)
     MAX_JOB_AGE_DAYS: int = 14
-    # gov.hk 大灣區青年就業計劃: posting date must be within 2 months (60 days).
-    GBAY_MAX_JOB_AGE_DAYS: int = 60
+    # gov.hk 大灣區青年就業計劃: 淨係收刊登日期喺一個星期（7 日）之內嘅工。
+    GBAY_MAX_JOB_AGE_DAYS: int = 7
     # gov.hk 資訊及科技界: only the first N jobs per scan (list is newest-first).
     GOVHK_IT_MAX_JOBS: int = 50
     # Optional global cap on total jobs kept per scan, per track

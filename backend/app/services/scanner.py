@@ -204,7 +204,7 @@ async def run_scan(db: Session, progress: dict | None = None,
                 break
 
         # freshness filter: drop jobs posted more than the window ago.
-        # 大灣區 = GBAY_MAX_JOB_AGE_DAYS（60日，用戶揀咗）；其他渠道 =
+        # 大灣區 = GBAY_MAX_JOB_AGE_DAYS（7日）；其他渠道 =
         # MAX_JOB_AGE_DAYS（14日 — 淨係收刊登日期喺附近嘅新工）。
         kept: list = []
         for d in t_drafts:
@@ -407,7 +407,7 @@ async def _fill_detail(db: Session, row: JobApplication, fetch_detail,
     if draft.posted_at:
         row.posted_at = draft.posted_at
         row.posted_date = parse_posted_date(draft.posted_at)
-        # 大灣區 60 日；其他渠道 14 日（淨係收附近嘅新工）
+        # 大灣區 7 日（一個星期）；其他渠道 14 日
         max_age = (settings.GBAY_MAX_JOB_AGE_DAYS if row.platform == "govhk_gbayes"
                    else settings.MAX_JOB_AGE_DAYS)
         if max_age > 0 and not is_fresh(draft.posted_at, max_age):

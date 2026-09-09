@@ -32,7 +32,9 @@ async def lifespan(app: FastAPI):
         _scheduler = AsyncIOScheduler()
         _scheduler.add_job(
             _scheduled_scan,
-            CronTrigger(day=f"*/{settings.SCAN_DAY_INTERVAL}", hour=settings.SCAN_HOUR),
+            # 雙日錨定（2-31/2）而唔係 */2（單日）：確保「下次」就係今晚凌晨，
+            # 之後每兩日凌晨 SCAN_HOUR 照跑（*/2 會喺單數日，跳過今晚）。
+            CronTrigger(day=f"2-31/{settings.SCAN_DAY_INTERVAL}", hour=settings.SCAN_HOUR),
             id="scan_jobs",
             coalesce=True,
             max_instances=1,
