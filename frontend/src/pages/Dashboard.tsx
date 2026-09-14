@@ -425,7 +425,7 @@ export function Dashboard({
         <button className="chip-btn" onClick={clearFilters} title="清除全部 filter">
           ✕ 清除全部
         </button>
-        <button className="btn" onClick={doBackfill} title="為最舊嘅未處理職位補上 JD / CL">
+        <button className="btn" onClick={doBackfill} title="為最舊嘅未處理職位補上 JD / CL（會用 LLM）">
           ⇪ 補齊
         </button>
       </div>

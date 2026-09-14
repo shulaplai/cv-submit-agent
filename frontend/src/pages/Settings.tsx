@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
 import { api } from "../api";
+import type { CVKind } from "../api";
 import type { Profile } from "../types";
 
 export function Settings({ pushToast }: { pushToast: (text: string, kind?: "info" | "ok" | "err") => void }) {
@@ -11,9 +12,15 @@ export function Settings({ pushToast }: { pushToast: (text: string, kind?: "info
   const [browserOk, setBrowserOk] = useState(false);
   const [chromeRunning, setChromeRunning] = useState(false);
   const [browserNote, setBrowserNote] = useState("檢查 Chrome 連線中…");
-  const cvInputs = useRef<{ en: HTMLInputElement | null; zh: HTMLInputElement | null }>({
+  const cvInputs = useRef<Record<string, HTMLInputElement | null>>({
     en: null,
     zh: null,
+    ai_en: null,
+    ai_zh: null,
+    fullstack_en: null,
+    fullstack_zh: null,
+    developer_en: null,
+    developer_zh: null,
   });
 
   useEffect(() => {
@@ -54,9 +61,21 @@ export function Settings({ pushToast }: { pushToast: (text: string, kind?: "info
     }
   };
 
-  const fileRef = (kind: "en" | "zh") => cvInputs.current[kind];
+  const fileRef = (kind: CVKind) => cvInputs.current[kind];
 
-  const pickCV = async (kind: "en" | "zh", e: ChangeEvent<HTMLInputElement>) => {
+  const cvKindLabel = (kind: CVKind): string => {
+    const lang = kind.endsWith("_en") ? "英文" : kind.endsWith("_zh") ? "中文" : kind === "en" ? "英文" : "中文";
+    const variant = kind.startsWith("ai")
+      ? "AI 版"
+      : kind.startsWith("fullstack")
+        ? "Full-stack 版"
+        : kind.startsWith("developer")
+          ? "Developer 版"
+          : "通用版";
+    return `${lang} ${variant}`;
+  };
+
+  const pickCV = async (kind: CVKind, e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
@@ -65,7 +84,7 @@ export function Settings({ pushToast }: { pushToast: (text: string, kind?: "info
       const updated = await api.uploadCV(kind, file);
       setP(updated);
       setSkillsText(updated.skills_json);
-      pushToast(`${kind === "en" ? "英文" : "中文"} CV 已上傳（data/cvs/）。`, "ok");
+      pushToast(`${cvKindLabel(kind)} CV 已上傳（data/cvs/）。`, "ok");
     } catch (err) {
       pushToast(`上傳失敗: ${(err as Error).message}`, "err");
     } finally {
@@ -91,6 +110,12 @@ export function Settings({ pushToast }: { pushToast: (text: string, kind?: "info
         email: p.email,
         cv_en_path: p.cv_en_path,
         cv_zh_path: p.cv_zh_path,
+        cv_ai_en_path: p.cv_ai_en_path,
+        cv_ai_zh_path: p.cv_ai_zh_path,
+        cv_fullstack_en_path: p.cv_fullstack_en_path,
+        cv_fullstack_zh_path: p.cv_fullstack_zh_path,
+        cv_developer_en_path: p.cv_developer_en_path,
+        cv_developer_zh_path: p.cv_developer_zh_path,
         skills_json: skillsText,
         gba_age_under_29: p.gba_age_under_29,
         gba_edu_associate_degree: p.gba_edu_associate_degree,
@@ -109,7 +134,9 @@ export function Settings({ pushToast }: { pushToast: (text: string, kind?: "info
         it_track_enabled: p.it_track_enabled,
         general_track_enabled: p.general_track_enabled,
         general_job_keywords: p.general_job_keywords,
+        non_it_keywords: p.non_it_keywords,
         offertoday_general_search_terms: p.offertoday_general_search_terms,
+        offertoday_it_search_terms: p.offertoday_it_search_terms,
         govhk_it_max_jobs: p.govhk_it_max_jobs,
         govhk_general_max_jobs: p.govhk_general_max_jobs,
         offertoday_it_max_per_search: p.offertoday_it_max_per_search,
@@ -403,6 +430,18 @@ export function Settings({ pushToast }: { pushToast: (text: string, kind?: "info
             </div>
           </div>
           <div className="field">
+            <label>「唔當 IT」字眼（逗號分隔；留空 = 內建）</label>
+            <input
+              value={p.non_it_keywords}
+              onChange={(e) => set("non_it_keywords", e.target.value)}
+              placeholder="mechanical, civil, 土木, 結構, 機械, 排版, 外勤…"
+            />
+            <div className="note-inline">
+              職位標題有呢啲字就唔會入 IT 軌（擋住 engineer／工程師／技術員 等過闊字造成嘅誤分類）；
+              但如果同時有「肯定係 IT」字眼（AI、developer、軟件、系統、資訊…）就照當 IT。
+            </div>
+          </div>
+          <div className="field">
             <label>每次掃描上限（每 track / 每個來源；填 0 = 還原 .env 預設）</label>
             <div className="cap-grid">
               <label>
@@ -441,6 +480,17 @@ export function Settings({ pushToast }: { pushToast: (text: string, kind?: "info
                   onChange={(e) => set("offertoday_general_max_per_search", Number(e.target.value))}
                 />
               </label>
+            </div>
+          </div>
+          <div className="field">
+            <label>OfferToday IT 職位搜尋字詞（逗號分隔；留空 = 用 .env 預設）</label>
+            <input
+              value={p.offertoday_it_search_terms}
+              onChange={(e) => set("offertoday_it_search_terms", e.target.value)}
+              placeholder="AI Agent, 人工智能, 大模型, AI…"
+            />
+            <div className="note-inline">
+              喺 OfferToday 三個技術分類頁（資訊科技／工程師／科技）之上，再逐個字詞開搜尋頁；每次最多 4 個（`OFFERTODAY_IT_MAX_SEARCHES`）。
             </div>
           </div>
           <div className="field">
@@ -488,6 +538,54 @@ export function Settings({ pushToast }: { pushToast: (text: string, kind?: "info
             style={{ display: "none" }}
             onChange={(e) => pickCV("zh", e)}
           />
+        </div>
+        <div className="field">
+          <label>CV 版本（申請時自動揀）</label>
+          <div className="note-inline" style={{ marginBottom: 6 }}>
+            AI 職位 → <b>AI 版</b>；冇 AI 版 → <b>Full-stack 版</b>；連 Full-stack 都冇 →{" "}
+            <b>Developer 版</b>；全部都冇 → 上面嘅通用版。OfferToday 會喺「揀履歷」嗰步按檔名揀同一版本。
+          </div>
+          {(
+            [
+              ["ai_en", "AI 版（英文）"],
+              ["ai_zh", "AI 版（中文）"],
+              ["fullstack_en", "Full-stack 版（英文）"],
+              ["fullstack_zh", "Full-stack 版（中文）"],
+              ["developer_en", "Developer 版（英文）"],
+              ["developer_zh", "Developer 版（中文）"],
+            ] as [CVKind, string][]
+          ).map(([kind, label]) => {
+            const pathKey = `cv_${kind}_path` as keyof Profile;
+            const current = String(p[pathKey] || "");
+            return (
+              <div className="cv-variant-row" key={kind}>
+                <span className="cv-variant-label">{label}</span>
+                <button className="btn" onClick={() => fileRef(kind)?.click()} disabled={busy}>
+                  📁 揀檔案…
+                </button>
+                <span className="cv-variant-path">{current ? current.split("/").pop() : "未設定"}</span>
+                {current && (
+                  <button
+                    className="chip-btn"
+                    onClick={() => set(pathKey, "")}
+                    title="清除呢個版本（申請時會跳去下一個版本）"
+                  >
+                    ✕
+                  </button>
+                )}
+                <input
+                  type="file"
+                  accept=".pdf"
+                  ref={(el) => (cvInputs.current[kind] = el)}
+                  style={{ display: "none" }}
+                  onChange={(e) => pickCV(kind, e)}
+                />
+              </div>
+            );
+          })}
+          <div className="note-inline" style={{ marginTop: 6 }}>
+            記住撳下面「儲存」先會生效。
+          </div>
         </div>
         <div className="field">
           <label>技能清單（JSON 陣列，用嚟 match score 同 CL）</label>

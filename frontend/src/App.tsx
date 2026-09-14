@@ -5,9 +5,20 @@ import { Dashboard } from "./pages/Dashboard";
 import { History } from "./pages/History";
 import { Settings } from "./pages/Settings";
 import { StatsPage } from "./pages/StatsPage";
+import { PLATFORM_LABEL } from "./types";
 import type { ScanStatus } from "./types";
 
 type View = "dashboard" | "history" | "stats" | "settings";
+
+// 可揀嘅掃描渠道（key 同 platform 一致，所以可以直接用 PLATFORM_LABEL）
+const SCAN_CHANNELS = ["offertoday", "govhk_it", "govhk_general", "govhk_gbayes"];
+// 每個渠道屬於邊個 track（政府一般 = 一般 track；其餘 = IT track）
+const CHANNEL_TRACK: Record<string, "it" | "general"> = {
+  offertoday: "it",
+  govhk_it: "it",
+  govhk_gbayes: "it",
+  govhk_general: "general",
+};
 
 interface Toast {
   id: number;
@@ -19,8 +30,11 @@ export default function App() {
   const [view, setView] = useState<View>("dashboard");
   const [scan, setScan] = useState<ScanStatus | null>(null);
   const [scanTrack, setScanTrack] = useState<"all" | "it" | "general">("all");
+  // 渠道（可多揀）：OfferToday / 政府 IT / 政府一般 / 大灣區計劃
+  const [scanChannels, setScanChannels] = useState<string[]>(SCAN_CHANNELS);
   const [kwIt, setKwIt] = useState("");
   const [kwGeneral, setKwGeneral] = useState("");
+  const [kwItSearch, setKwItSearch] = useState("");   // OfferToday IT 額外搜尋字詞
   const [kwOpen, setKwOpen] = useState(false);
   const [profileLoaded, setProfileLoaded] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -51,6 +65,7 @@ export default function App() {
     api.profile().then((p) => {
       setKwIt(p.it_keywords);
       setKwGeneral(p.general_job_keywords);
+      setKwItSearch(p.offertoday_it_search_terms);
       setProfileLoaded(true);
     }).catch(() => {});
   }, []);
@@ -60,18 +75,26 @@ export default function App() {
       // 掃描前：如果關鍵字改過，先儲存入設定（下次 scan 都用同一套）
       if (profileLoaded) {
         const p = await api.profile();
-        if (kwIt !== p.it_keywords || kwGeneral !== p.general_job_keywords) {
-          await api.saveProfile({ it_keywords: kwIt, general_job_keywords: kwGeneral });
+        if (kwIt !== p.it_keywords || kwGeneral !== p.general_job_keywords
+            || kwItSearch !== p.offertoday_it_search_terms) {
+          await api.saveProfile({
+            it_keywords: kwIt,
+            general_job_keywords: kwGeneral,
+            offertoday_it_search_terms: kwItSearch,
+          });
           pushToast("掃描關鍵字已儲存到設定。", "ok");
         }
       }
-      const r = await api.startScan(scanTrack);
+      const r = await api.startScan(scanTrack, scanChannels);
       pushToast(r.message || "scan 已開始", "info");
       setTimeout(refreshScan, 1500);
     } catch (e) {
       pushToast(`scan 失敗: ${(e as Error).message}`, "err");
     }
-  }, [pushToast, refreshScan, scanTrack, kwIt, kwGeneral, profileLoaded]);
+  }, [pushToast, refreshScan, scanTrack, scanChannels, kwIt, kwGeneral, kwItSearch, profileLoaded]);
+
+  const toggleChannel = (key: string) =>
+    setScanChannels((prev) => (prev.includes(key) ? prev.filter((c) => c !== key) : [...prev, key]));
 
   const stopScan = useCallback(async () => {
     try {
@@ -175,6 +198,11 @@ export default function App() {
                     已攞 JD {scan.last.details_fetched} 份
                   </>
                 )}
+                <br />
+                渠道：
+                {scan.last.channels && scan.last.channels.length > 0
+                  ? scan.last.channels.map((c) => PLATFORM_LABEL[c] || c).join("、")
+                  : "全部"}
                 {scan.last.errors.length > 0 && (
                   <>
                     <br />
@@ -187,7 +215,12 @@ export default function App() {
             )}
           </div>
           <div className="scan-actions">
-            <button className="btn ink" onClick={startScan} disabled={scan?.running}>
+            <button
+              className="btn ink"
+              onClick={startScan}
+              disabled={scan?.running || scanChannels.length === 0}
+              title={scanChannels.length === 0 ? "至少要揀一個渠道" : "開始掃描"}
+            >
               {scan?.running ? "掃描中…" : "▶ 立即掃描"}
             </button>
             <button
@@ -211,6 +244,45 @@ export default function App() {
             <option value="it">淨掃描：IT 職位</option>
             <option value="general">淨掃描：一般職位</option>
           </select>
+          <div className="scan-channels" title="揀今次 scan 想掃邊幾個渠道（可多揀）">
+            <div className="filter-label" style={{ marginBottom: 4 }}>
+              渠道（可多揀）
+            </div>
+            <div className="chip-row">
+              {SCAN_CHANNELS.map((key) => (
+                <button
+                  key={key}
+                  className={`chip-btn ${scanChannels.includes(key) ? "active" : ""}`}
+                  onClick={() => toggleChannel(key)}
+                  disabled={scan?.running}
+                  title={`${PLATFORM_LABEL[key]}｜屬 ${CHANNEL_TRACK[key] === "it" ? "IT" : "一般"} 軌`}
+                >
+                  {PLATFORM_LABEL[key]}
+                </button>
+              ))}
+              <button
+                className="chip-btn"
+                onClick={() => setScanChannels(SCAN_CHANNELS)}
+                disabled={scan?.running || scanChannels.length === SCAN_CHANNELS.length}
+                title="全部渠道"
+              >
+                全選
+              </button>
+              <button
+                className="chip-btn"
+                onClick={() => setScanChannels([])}
+                disabled={scan?.running || scanChannels.length === 0}
+                title="唔掃任何渠道（記得再揀返）"
+              >
+                清除
+              </button>
+            </div>
+            {scanChannels.length === 0 && (
+              <div className="note-inline" style={{ fontSize: 11, color: "var(--err, #c0392b)" }}>
+                ⚠ 至少要揀一個渠道先撳得「立即掃描」
+              </div>
+            )}
+          </div>
           <button
             className="btn"
             onClick={() => setKwOpen((v) => !v)}
@@ -236,6 +308,14 @@ export default function App() {
                   value={kwGeneral}
                   onChange={(e) => setKwGeneral(e.target.value)}
                   placeholder="文員, 行政助理, 客戶服務…（留空 = 預設）"
+                />
+              </label>
+              <label>
+                OfferToday IT 額外搜尋字詞
+                <input
+                  value={kwItSearch}
+                  onChange={(e) => setKwItSearch(e.target.value)}
+                  placeholder="AI Agent, 人工智能, 大模型, AI…（留空 = .env 預設）"
                 />
               </label>
               <div className="note-inline" style={{ fontSize: 11, marginTop: 4 }}>

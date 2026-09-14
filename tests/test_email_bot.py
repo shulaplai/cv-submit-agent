@@ -170,7 +170,8 @@ def test_open_email_compose_polishes_and_saves_cl(monkeypatch, db):
     monkeypatch.setattr(email_bot, "polish_cl_for_email", fake_polish)
     monkeypatch.setattr(email_bot, "compose_in_mail", fake_compose)
     monkeypatch.setattr(email_bot, "attach_cv_to_draft", fake_attach)
-    monkeypatch.setattr("app.services.cv_loader.resolve_cv_path", lambda lang: "")
+    monkeypatch.setattr("app.services.cv_loader.resolve_cv_path",
+                        lambda lang, variant="": "")
 
     result = asyncio.run(email_bot.open_email_compose(row, "原文 CL", send=False))
     assert result["ok"] is True
@@ -211,7 +212,8 @@ def test_open_email_compose_polish_failure_uses_original(monkeypatch, db):
     monkeypatch.setattr(email_bot, "polish_cl_for_email", fake_polish)
     monkeypatch.setattr(email_bot, "compose_in_mail", fake_compose)
     monkeypatch.setattr(email_bot, "attach_cv_to_draft", fake_attach)
-    monkeypatch.setattr("app.services.cv_loader.resolve_cv_path", lambda lang: "")
+    monkeypatch.setattr("app.services.cv_loader.resolve_cv_path",
+                        lambda lang, variant="": "")
 
     result = asyncio.run(email_bot.open_email_compose(row, "原文 CL", send=False))
     assert result["ok"] is True

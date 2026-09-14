@@ -34,6 +34,12 @@ _COLUMN_MIGRATIONS = [
     ("profiles", "auto_submit", "BOOLEAN NOT NULL DEFAULT 1"),
     ("profiles", "intro_en", "TEXT NOT NULL DEFAULT ''"),
     ("profiles", "intro_zh", "TEXT NOT NULL DEFAULT ''"),
+    ("profiles", "cv_ai_en_path", "VARCHAR(500) NOT NULL DEFAULT ''"),
+    ("profiles", "cv_ai_zh_path", "VARCHAR(500) NOT NULL DEFAULT ''"),
+    ("profiles", "cv_fullstack_en_path", "VARCHAR(500) NOT NULL DEFAULT ''"),
+    ("profiles", "cv_fullstack_zh_path", "VARCHAR(500) NOT NULL DEFAULT ''"),
+    ("profiles", "cv_developer_en_path", "VARCHAR(500) NOT NULL DEFAULT ''"),
+    ("profiles", "cv_developer_zh_path", "VARCHAR(500) NOT NULL DEFAULT ''"),
     ("profiles", "offertoday_cv_en_keyword", "VARCHAR(200) NOT NULL DEFAULT ''"),
     ("profiles", "offertoday_cv_zh_keyword", "VARCHAR(200) NOT NULL DEFAULT ''"),
     ("profiles", "after_cv_intro_it_zh", "TEXT NOT NULL DEFAULT ''"),
@@ -44,7 +50,9 @@ _COLUMN_MIGRATIONS = [
     ("profiles", "it_track_enabled", "BOOLEAN NOT NULL DEFAULT 1"),
     ("profiles", "general_track_enabled", "BOOLEAN NOT NULL DEFAULT 1"),
     ("profiles", "general_job_keywords", "TEXT NOT NULL DEFAULT ''"),
+    ("profiles", "non_it_keywords", "TEXT NOT NULL DEFAULT ''"),
     ("profiles", "offertoday_general_search_terms", "TEXT NOT NULL DEFAULT ''"),
+    ("profiles", "offertoday_it_search_terms", "TEXT NOT NULL DEFAULT ''"),
     ("profiles", "govhk_it_max_jobs", "INTEGER NOT NULL DEFAULT 0"),
     ("profiles", "govhk_general_max_jobs", "INTEGER NOT NULL DEFAULT 0"),
     ("profiles", "offertoday_it_max_per_search", "INTEGER NOT NULL DEFAULT 0"),
@@ -141,18 +149,19 @@ def _backfill_categories() -> None:
     rows (which defaulted to 'it') so the IT / 一般 board split is accurate.
     Deterministic, so running it every boot is harmless.
     """
-    from .services.classify import classify, resolve_it_keywords
+    from .services.classify import classify, resolve_it_keywords, resolve_non_it_keywords
 
     try:
         from .models import JobApplication
     except Exception:  # noqa: BLE001
         return
     it_kws = resolve_it_keywords()
+    non_it_kws = resolve_non_it_keywords()
     db = SessionLocal()
     try:
         changed = 0
         for row in db.query(JobApplication).all():
-            cat = classify(row.title or "", it_kws)
+            cat = classify(row.title or "", it_kws, non_it_kws)
             if cat != row.category:
                 row.category = cat
                 changed += 1

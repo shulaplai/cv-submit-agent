@@ -84,12 +84,13 @@ def _profile_it_keywords() -> str:
         return ""
 
 
-def _cv_path_for(language: str) -> str:
-    from .cv_loader import resolve_cv_path
+def _cv_path_for(language: str, title: str = "") -> str:
+    """CV to attach: 按職位標題揀版本（AI → Full-stack → Developer → 通用）。"""
+    from .cv_loader import resolve_cv_for_job, resolve_cv_path
 
-    path = resolve_cv_path(language)
+    path, _variant = resolve_cv_for_job(title, language)
     if not path:
-        path = resolve_cv_path("zh" if language == "en" else "en")
+        path = resolve_cv_path(language) or resolve_cv_path("zh" if language == "en" else "en")
     return path
 
 
@@ -143,6 +144,80 @@ async def open_apply(row: JobApplication, cl_text: str = "", auto: bool = False,
 def _abort(message: str, url: str = "") -> dict:
     return {"ok": True, "kind": "needs_manual", "submitted": False,
             "url": url, "message": message}
+
+
+# Playwright errors that mean "the Chrome window/handle went away" — these are
+# recoverable: rebuild the CDP connection and retry once.
+CLOSED_ERROR_MARKERS = (
+    "has been closed", "target closed", "target page, context or browser",
+    "browser has been closed", "disconnected",
+    "browser context management is not supported",
+)
+
+
+def _is_closed_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return any(m in text for m in CLOSED_ERROR_MARKERS)
+
+
+def friendly_browser_error(exc: Exception) -> str | None:
+    """Human hint for browser-level failures (None when not applicable).
+
+    The batch runner shows this instead of a raw Playwright string.
+    """
+    text = str(exc)
+    if _is_closed_error(exc):
+        return ("⚠ 專用 Chrome 斷線（視窗可能被關咗）——已經自動重開同重試，"
+                f"請再撳一次「自動投遞」。（技術細節：{text[:120]}）")
+    low = text.lower()
+    if "connect_over_cdp" in low or "econnrefused" in low or "9222" in low:
+        return f"⚠ 連唔到專用 Chrome（port 9222）——請撳「開啟 Chrome」再試。{text[:120]}"
+    return None
+
+
+async def _open_job_page(platform: str, url: str):
+    """Open a job page, self-healing when the Chrome window was closed.
+
+    The dedicated Chrome can be closed mid-session; the cached Playwright handle
+    then dies and every apply fails with "Target page, context or browser has
+    been closed". We rebuild the connection (and re-open a Chrome window) and
+    retry ONCE so the user never sees that raw error again.
+    """
+    from .scraper_base import repair_browsers
+
+    try:
+        session = await get_browser(platform)
+        page = await session.context.new_page()
+    except Exception as e:  # noqa: BLE001
+        if not _is_closed_error(e):
+            raise
+        log.warning("browser context for %s was closed (%s) — repairing and retrying", platform, e)
+        await repair_browsers()
+        session = await get_browser(platform)
+        page = await session.context.new_page()
+    await page.goto(url, wait_until="domcontentloaded", timeout=45_000)
+    return page
+
+
+# OfferToday marks vacancies the employer took down with a 「已關閉」 chip.
+CLOSED_JOB_MARKERS = ("職位已關閉", "該職位已關閉", "此職位已關閉", "已停止招聘", "已下架", "已關閉")
+
+
+async def _offertoday_job_closed(page) -> bool:
+    """True when OfferToday says the vacancy is closed (nothing to apply to)."""
+    try:
+        text = await page.inner_text("body")
+    except Exception:  # noqa: BLE001
+        return False
+    if any(m in text for m in CLOSED_JOB_MARKERS):
+        return True
+    try:
+        badge = page.locator("text=已關閉").first
+        if await badge.count() and await badge.is_visible():
+            return True
+    except Exception:  # noqa: BLE001
+        pass
+    return False
 
 
 # ------------------------------------------------------------------ field filling
@@ -324,9 +399,7 @@ async def _confirm_submitted(page, timeout_ms: int = 15000, quick: bool = False)
 # ------------------------------------------------------------------ JobsDB
 
 async def _jobsdb(row: JobApplication, cl_text: str, auto: bool) -> dict:
-    session = await get_browser("jobsdb")
-    page = await session.context.new_page()
-    await page.goto(row.url, wait_until="domcontentloaded", timeout=45_000)
+    page = await _open_job_page("jobsdb", row.url)
     if await is_blocked(page):
         return _abort("JobsDB 出現驗證/登入牆，請喺開咗嘅視窗完成驗證或登入，再手動申請。", page.url)
 
@@ -387,7 +460,7 @@ async def generate_after_cv_intro(lang: str, is_it: bool) -> str:
     from ..services.cv_loader import get_cv_text, load_skills
 
     try:
-        cv_text = get_cv_text(lang)
+        cv_text = get_cv_text(lang, title)
     except Exception:  # noqa: BLE001 — no CV configured, still generate generic
         cv_text = ""
     skills = load_skills()
@@ -457,9 +530,7 @@ async def _offertoday_send_message(page, text: str) -> bool:
 
 
 async def _offertoday(row: JobApplication, cl_text: str, auto: bool) -> dict:
-    session = await get_browser("offertoday")
-    page = await session.context.new_page()
-    await page.goto(row.url, wait_until="domcontentloaded", timeout=45_000)
+    page = await _open_job_page("offertoday", row.url)
     # The message entry button is JS-rendered (SPA); wait for it to mount.
     try:
         await page.wait_for_selector("#J_apply, button:has-text('繼續溝通')", timeout=15000)
@@ -480,6 +551,9 @@ async def _offertoday(row: JobApplication, cl_text: str, auto: bool) -> dict:
             except Exception:  # noqa: BLE001
                 continue
     if not opened:
+        if await _offertoday_job_closed(page):
+            return {"ok": False, "kind": "closed", "submitted": False, "url": page.url,
+                    "message": "⚠ 呢份 OfferToday 工已經關閉（顯示『已關閉』／已停止招聘），冇得再申請。"}
         return _abort("未揾到 OfferToday「傳送訊息／繼續溝通」掣，請喺視窗手動開啟。", page.url)
     await asyncio.sleep(1.5)
     if await is_blocked(page):
@@ -488,7 +562,8 @@ async def _offertoday(row: JobApplication, cl_text: str, auto: bool) -> dict:
     cfg = _offertoday_settings()
 
     # 1. 發履歷 -> 「選擇履歷」dialog -> pick CV by JD language
-    picked = await _offertoday_pick_cv(page, row.jd_language, cfg["cv_zh_kw"], cfg["cv_en_kw"])
+    picked = await _offertoday_pick_cv(page, row.jd_language, cfg["cv_zh_kw"], cfg["cv_en_kw"],
+                                        title=row.title)
     if not picked:
         return {"ok": True, "kind": "form", "submitted": False, "url": page.url,
                 "message": "⚠ 未揾到/揀到已上傳嘅 CV，請喺視窗手動撳「發履歷」揀。"}
@@ -534,9 +609,17 @@ def _offertoday_cv_matches(filename: str, language: str, zh_kw: str = "", en_kw:
     return True
 
 
-async def _offertoday_pick_cv(page, language: str, zh_kw: str = "", en_kw: str = "") -> str:
-    """Click 「發履歷」 to open the 「選擇履歷」 dialog and pick the CV whose
-    filename matches the JD language. Returns the picked filename ('' = failed)."""
+async def _offertoday_pick_cv(page, language: str, zh_kw: str = "", en_kw: str = "",
+                               title: str = "") -> str:
+    """Click 「發履歷」 to open the 「選擇履歷」 dialog and pick a CV.
+
+    Two-step choice:
+      1. keep the resumes whose filename matches the JD language;
+      2. among those, prefer the CV VERSION the job asks for
+         (AI 職位 → AI 版 → Full-stack 版 → Developer 版; 其他 → Full-stack → Developer),
+         matching by filename keywords. No match → first language match (old behaviour).
+    Returns the picked filename ('' = failed).
+    """
     fb = page.locator("button:has-text('發履歷')").first
     for _ in range(8):
         if await fb.count():
@@ -563,8 +646,19 @@ async def _offertoday_pick_cv(page, language: str, zh_kw: str = "", en_kw: str =
     if not candidates:
         return ""
 
-    # pick the first candidate matching the language, else fall back to the first
-    chosen = next((c for c in candidates if _offertoday_cv_matches(c[0], language, zh_kw, en_kw)), candidates[0])
+    # 1. language filter (same as before)
+    lang_ok = [c for c in candidates if _offertoday_cv_matches(c[0], language, zh_kw, en_kw)]
+    pool = lang_ok or candidates
+
+    # 2. version filter: AI 職位優先揀 AI 版履歷，跟住 Full-stack，最後 Developer
+    from .cv_loader import offertoday_variant_preference, filename_matches_variant
+
+    chosen = pool[0]
+    for variant in offertoday_variant_preference(title):
+        hit = next((c for c in pool if filename_matches_variant(c[0], variant)), None)
+        if hit:
+            chosen = hit
+            break
     try:
         await items.nth(chosen[1]).click(timeout=5000)
         return chosen[0]
@@ -586,7 +680,7 @@ async def _prefill_platform(page, row: JobApplication, cl_text: str, name: str) 
         notes.append(filled if filled else "未揾到 CL/訊息輸入框（請手動貼上）")
     else:
         notes.append("未有 CL（請先喺詳情頁生成）")
-    cv_path = _cv_path_for(row.jd_language)
+    cv_path = _cv_path_for(row.jd_language, row.title)
     if _cv_exists(cv_path):
         cv_ok, cv_note = await _attach_cv(page, cv_path)
         notes.append(cv_note if cv_ok else f"⚠ {cv_note}（可喺視窗手動補）")
@@ -600,7 +694,7 @@ async def _auto_submit_platform(page, row: JobApplication, cl_text: str) -> dict
     """Fill CL + attach CV and click submit. Returns {ok, kind, submitted, url, message}."""
     if not cl_text:
         return _abort("未有 Cover Letter（可能 LLM key 未設定）——唔會亂投。請先喺職位詳情生成/編輯 CL。", page.url)
-    cv_path = _cv_path_for(row.jd_language)
+    cv_path = _cv_path_for(row.jd_language, row.title)
     if not _cv_exists(cv_path):
         return _abort(f"揾唔到 CV 檔案：{cv_path}——請喺設定頁填返 CV 路徑先。", page.url)
 

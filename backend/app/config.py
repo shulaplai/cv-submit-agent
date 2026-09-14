@@ -26,6 +26,22 @@ class Settings(BaseSettings):
     APPLICANT_EMAIL: str = ""  # sender shown in mailto / Mail drafts
     CV_EN_PATH: str = ""       # absolute path to English CV PDF
     CV_ZH_PATH: str = ""       # absolute path to Chinese CV PDF
+    # ---- CV 版本（申請時按職位標題自動揀）----
+    # AI 職位 → AI 版；冇 AI 版 → Full-stack 版；冇 Full-stack → Developer 版；
+    # 全部都冇 → CV_EN_PATH / CV_ZH_PATH（通用版）。留空 = 冇嗰個版本。
+    CV_AI_EN_PATH: str = ""
+    CV_AI_ZH_PATH: str = ""
+    CV_FULLSTACK_EN_PATH: str = ""
+    CV_FULLSTACK_ZH_PATH: str = ""
+    CV_DEVELOPER_EN_PATH: str = ""
+    CV_DEVELOPER_ZH_PATH: str = ""
+    # 「AI 職位」判斷：只睇職位標題（用戶揀咗保守做法）。逗號分隔，不分大小寫；
+    # 拉丁字用詞邊界比對，所以 "ai" 唔會誤中 "email"/"detail"。
+    CV_AI_TITLE_KEYWORDS: str = (
+        "ai,artificial intelligence,人工智能,機器學習,machine learning,"
+        "深度學習,deep learning,llm,大模型,nlp,自然語言處理,電腦視覺,"
+        "computer vision,生成式,genai,ai agent,算法"
+    )
 
     # --- Job targeting ---
     JOB_KEYWORDS: str = "AI Engineer,agent developer,AI developer,developer,programmer,frontend developer,資訊科技工程師,AI 工程師,AI基礎架構"
@@ -46,10 +62,10 @@ class Settings(BaseSettings):
     # 唔好俾 OfferToday 嘅 anti-WAF 見到固定節奏）。0 = disable.
     SCAN_JOB_DELAY_MIN_SECONDS: float = 4.0
     SCAN_JOB_DELAY_MAX_SECONDS: float = 6.0
-    # Every scan ALSO fetches the full JD for every new row (no LLM) plus up to
-    # this many oldest rows still missing a JD (detail-only backfill), so the
-    # whole board gradually carries a description. Set 0 to disable.
-    DETAIL_BACKFILL_PER_SCAN: int = 20
+    # Every scan fetches the full JD for every NEW row (no LLM). This extra knob
+    # also backfilled up to N oldest rows still missing a JD, but the user does
+    # not want old postings touched — click 更新 JD per job instead. Left at 0.
+    DETAIL_BACKFILL_PER_SCAN: int = 0
     # Only keep jobs whose posting date is within this many days (2 weeks —
     # 淨係收刊登日期喺附近嘅新工). Applies to every non-GBA platform (incl.
     # gov.hk IT/general categories). Jobs with an unknown posting date (e.g.
@@ -88,6 +104,9 @@ class Settings(BaseSettings):
     # the 一般 page (IT-classified jobs are always excluded there). Empty ->
     # built-in defaults (文員/行政助理/客戶服務/…).
     GENERAL_JOB_KEYWORDS: str = ""
+    # 唔當 IT 嘅職位字眼（逗號分隔；留空 = 內建）。擋住 engineer／工程師／技術員
+    # 呢啲好闊嘅字造成嘅誤分類（例：MECHANICAL ENGINEER）。
+    NON_IT_KEYWORDS: str = ""
     # gov.hk 一般 track: the main quickview (ALL vacancy categories, newest
     # first) filtered by the general keywords; at most N jobs per scan.
     GOVHK_GENERAL_MAX_JOBS: int = 20

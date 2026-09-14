@@ -22,6 +22,16 @@ class Profile(Base):
     email: Mapped[str] = mapped_column(String(200), default="")
     cv_en_path: Mapped[str] = mapped_column(String(500), default="")
     cv_zh_path: Mapped[str] = mapped_column(String(500), default="")
+    # ---- CV 版本（每種語言各有 AI／Full-stack／Developer 版）----
+    # 申請時按職位標題揀版本：AI 職位 -> AI 版；冇 AI 版 -> Full-stack 版；
+    # 連 Full-stack 版都冇 -> Developer 版；全部都冇 -> cv_*_path（通用版）。
+    # 留空 = 冇嗰個版本。
+    cv_ai_en_path: Mapped[str] = mapped_column(String(500), default="")
+    cv_ai_zh_path: Mapped[str] = mapped_column(String(500), default="")
+    cv_fullstack_en_path: Mapped[str] = mapped_column(String(500), default="")
+    cv_fullstack_zh_path: Mapped[str] = mapped_column(String(500), default="")
+    cv_developer_en_path: Mapped[str] = mapped_column(String(500), default="")
+    cv_developer_zh_path: Mapped[str] = mapped_column(String(500), default="")
     skills_json: Mapped[str] = mapped_column(Text, default="[]")  # list[str]
     gba_age_under_29: Mapped[bool] = mapped_column(default=True)
     gba_edu_associate_degree: Mapped[bool] = mapped_column(default=True)
@@ -47,10 +57,15 @@ class Profile(Base):
     # ---- Job-track settings (IT vs 一般), editable in the Settings page ----
     it_track_enabled: Mapped[bool] = mapped_column(default=True)
     general_track_enabled: Mapped[bool] = mapped_column(default=True)
+    # 「唔當 IT」嘅職位字眼（擋住 engineer／工程師／技術員 等過闊字；空 = 內建）
+    non_it_keywords: Mapped[str] = mapped_column(Text, default="")
     # Non-IT track keywords (empty = .env GENERAL_JOB_KEYWORDS or built-ins)
     general_job_keywords: Mapped[str] = mapped_column(Text, default="")
     # OfferToday general track: comma-separated search terms (empty = general keywords)
     offertoday_general_search_terms: Mapped[str] = mapped_column(Text, default="")
+    # OfferToday IT track: extra keyword searches on top of the 3 category pages
+    # (empty = .env OFFERTODAY_IT_SEARCH_TERMS)
+    offertoday_it_search_terms: Mapped[str] = mapped_column(Text, default="")
     # Per-source scan caps per track (0 = .env default at profile creation)
     govhk_it_max_jobs: Mapped[int] = mapped_column(Integer, default=0)
     govhk_general_max_jobs: Mapped[int] = mapped_column(Integer, default=0)

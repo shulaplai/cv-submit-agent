@@ -239,20 +239,29 @@ def _too_old(posted_at: str, max_age: int | None = None) -> bool:
 
 
 async def scrape(session: BrowserSession, track: str = "it",
-                 cfg: TrackConfig | None = None) -> list[JobDraft]:
+                 cfg: TrackConfig | None = None,
+                 channels: list[str] | tuple[str, ...] | None = None) -> list[JobDraft]:
     """Scrape the gov.hk channels for one job track.
 
-    - IT track: 大灣區 quickview (ALL vacancies, IT + 一般, 2-month window)
+    - IT track: 大灣區 quickview (ALL vacancies, IT + 一般, 1-week window)
       + 資訊及科技界 category (cap).
     - general track: main quickview (all categories) filtered by the general
       keywords, excluding IT-classified titles.
+
+    ``channels`` narrows to specific gov.hk sub-channels — e.g. only
+    ``["govhk_gbayes"]`` for 大灣區計劃. Empty/None = the track's default set.
     """
     cfg = cfg or TrackConfig.defaults(track)
     seen: set[str] = set()
-    if track == "general":
-        drafts = await _scrape_general(session, seen, cfg)
-    else:
-        drafts = await _scrape_gbayes(session, seen, cfg)
+    wanted = ({c.strip() for c in channels if c and c.strip()} if channels
+              else ({"govhk_general"} if track == "general"
+                    else {"govhk_gbayes", "govhk_it"}))
+    drafts: list[JobDraft] = []
+    if "govhk_general" in wanted:
+        drafts += await _scrape_general(session, seen, cfg)
+    if "govhk_gbayes" in wanted:
+        drafts += await _scrape_gbayes(session, seen, cfg)
+    if "govhk_it" in wanted:
         drafts += await _scrape_it(session, seen, cfg)
     return drafts
 
@@ -288,7 +297,7 @@ async def _scrape_gbayes(session: BrowserSession, seen: set[str],
             if not it["job_id"] or it["job_id"] in seen:
                 continue
             seen.add(it["job_id"])
-            category = classify(it["title"], cfg.it_keywords)
+            category = classify(it["title"], cfg.it_keywords, cfg.non_it_keywords)
             drafts.append(await _fetch_detail(session, it, GBY_PLATFORM, category))
             # 大灣區：刊登日期要喺一個星期（7日）之內；
             # list is sorted newest-first: first stale job -> stop this channel
@@ -390,7 +399,7 @@ async def _scrape_general(session: BrowserSession, seen: set[str],
             it for it in items
             if it["job_id"] and it["job_id"] not in seen
             and title_matches(it["title"], cfg.keywords)      # keep: matches 一般 keywords
-            and classify(it["title"], cfg.it_keywords) == "general"  # drop IT titles
+            and classify(it["title"], cfg.it_keywords, cfg.non_it_keywords) == "general"  # drop IT titles
         ]
         for it in matches:
             seen.add(it["job_id"])

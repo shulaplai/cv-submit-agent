@@ -99,7 +99,7 @@ def test_run_scan_persists_category_per_track(db, monkeypatch):
     gen_draft = JobDraft(platform="offertoday", job_id="tokGEN",
                          title="文員", posted_at="")
 
-    async def fake_scrape(session, track="it", cfg=None):
+    async def fake_scrape(session, track="it", cfg=None, channels=None):
         return [it_draft if track == "it" else gen_draft]
 
     async def fake_get_browser(platform):
@@ -129,7 +129,7 @@ def test_run_scan_track_general_only(db, monkeypatch):
 
     calls = []
 
-    async def fake_scrape(session, track="it", cfg=None):
+    async def fake_scrape(session, track="it", cfg=None, channels=None):
         calls.append(track)
         return [JobDraft(platform="offertoday", job_id="tok1",
                          title="文員", posted_at="")]
@@ -157,7 +157,7 @@ def test_run_scan_respects_enable_toggles(db, monkeypatch):
 
     calls = []
 
-    async def fake_scrape(session, track="it", cfg=None):
+    async def fake_scrape(session, track="it", cfg=None, channels=None):
         calls.append(track)
         return [JobDraft(platform="offertoday", job_id="tok1",
                          title="AI Developer", posted_at="")]

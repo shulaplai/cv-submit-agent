@@ -102,7 +102,7 @@ async def scrape(session: BrowserSession, track: str = "it",
                         continue
                     category = "it"
                 else:
-                    if classify(title, cfg.it_keywords) != "general" \
+                    if classify(title, cfg.it_keywords, cfg.non_it_keywords) != "general" \
                        or not title_matches(title, cfg.keywords):
                         continue
                     category = "general"

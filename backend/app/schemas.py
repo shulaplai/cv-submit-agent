@@ -86,6 +86,12 @@ class ProfileIn(BaseModel):
     email: Optional[str] = None
     cv_en_path: Optional[str] = None
     cv_zh_path: Optional[str] = None
+    cv_ai_en_path: Optional[str] = None
+    cv_ai_zh_path: Optional[str] = None
+    cv_fullstack_en_path: Optional[str] = None
+    cv_fullstack_zh_path: Optional[str] = None
+    cv_developer_en_path: Optional[str] = None
+    cv_developer_zh_path: Optional[str] = None
     skills_json: Optional[str] = None
     gba_age_under_29: Optional[bool] = None
     gba_edu_associate_degree: Optional[bool] = None
@@ -104,7 +110,9 @@ class ProfileIn(BaseModel):
     it_track_enabled: Optional[bool] = None
     general_track_enabled: Optional[bool] = None
     general_job_keywords: Optional[str] = None
+    non_it_keywords: Optional[str] = None
     offertoday_general_search_terms: Optional[str] = None
+    offertoday_it_search_terms: Optional[str] = None
     govhk_it_max_jobs: Optional[int] = None
     govhk_general_max_jobs: Optional[int] = None
     offertoday_it_max_per_search: Optional[int] = None
@@ -118,6 +126,12 @@ class ProfileOut(BaseModel):
     email: str
     cv_en_path: str
     cv_zh_path: str
+    cv_ai_en_path: str
+    cv_ai_zh_path: str
+    cv_fullstack_en_path: str
+    cv_fullstack_zh_path: str
+    cv_developer_en_path: str
+    cv_developer_zh_path: str
     skills_json: str
     gba_age_under_29: bool
     gba_edu_associate_degree: bool
@@ -136,7 +150,9 @@ class ProfileOut(BaseModel):
     it_track_enabled: bool
     general_track_enabled: bool
     general_job_keywords: str
+    non_it_keywords: str
     offertoday_general_search_terms: str
+    offertoday_it_search_terms: str
     govhk_it_max_jobs: int
     govhk_general_max_jobs: int
     offertoday_it_max_per_search: int

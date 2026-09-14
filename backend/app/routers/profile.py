@@ -52,8 +52,12 @@ async def upload_cv(kind: str = Form(...), file: UploadFile = File(...),
                     db: Session = Depends(get_db)):
     """Pick a CV via the browser file dialog: store it under data/cvs/ and set
     the profile path — the user never types a path manually."""
-    if kind not in ("en", "zh"):
-        raise HTTPException(status_code=400, detail="kind 必須係 en 或 zh")
+    # kind: en | zh（通用版）+ 版本版：ai_en / ai_zh / fullstack_en / fullstack_zh /
+    # developer_en / developer_zh（申請時按職位揀版本）
+    allowed = ("en", "zh") + tuple(f"{v}_{lang}" for v in ("ai", "fullstack", "developer")
+                                   for lang in ("en", "zh"))
+    if kind not in allowed:
+        raise HTTPException(status_code=400, detail=f"kind 必須係 {' / '.join(allowed)}")
     if not (file.filename or "").lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="暫時只支援 PDF（pypdf 讀取）")
     cvs_dir = settings.DATA_DIR / "cvs"

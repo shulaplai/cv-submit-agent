@@ -215,7 +215,7 @@ async def open_email_compose(row: JobApplication, cl_text: str, send: bool = Fal
     wording + tailored to this job); the polished version is saved as a new CL
     version. If the polish call fails, the original letter is used unchanged.
     """
-    from .cv_loader import resolve_cv_path
+    from .cv_loader import VARIANT_LABEL, resolve_cv_for_job
 
     # 發送前最後一執：AI 潤飾 CL（通順 + 貼合呢份工）。失敗就照用原文。
     if cl_text and cl_text.strip():
@@ -228,14 +228,22 @@ async def open_email_compose(row: JobApplication, cl_text: str, send: bool = Fal
             log.warning("CL polish failed for %s/%s: %s",
                         getattr(row, "platform", "?"), getattr(row, "id", "?"), e)
 
-    # Attach the CV matching the JD language; fall back to the other language.
-    cv_path = resolve_cv_path(row.jd_language) or resolve_cv_path("zh" if row.jd_language == "en" else "en")
+    # Attach the CV version matching the job (AI → Full-stack → Developer →
+    # 通用) for the JD language; falls back to the other language.
+    cv_path, cv_variant = resolve_cv_for_job(row.title, row.jd_language)
+    if not cv_path:
+        from .cv_loader import resolve_cv_path
+        cv_path = resolve_cv_path("zh" if row.jd_language == "en" else "en")
+        cv_variant = "default"
     email = build_email(row, cl_text or "（請喺 UI 先生成/編輯 Cover Letter）", cv_path, template_key)
+    # 話俾用戶知用咗邊個版本嘅 CV（AI 版／Full-stack 版／Developer 版／通用版）
+    cv_tag = f"（CV：{VARIANT_LABEL.get(cv_variant, cv_variant)}）"
 
     if send:
         ok, note = send_email_via_mail(email)
         if ok:
-            return {"ok": True, "kind": "email_sent", "to": email["to"], "message": note,
+            return {"ok": True, "kind": "email_sent", "to": email["to"],
+                    "message": f"{note} {cv_tag}",
                     "submitted": True,
                     "preview": {"to": email["to"], "subject": email["subject"], "body": email["body"]}}
         # sending failed -> fall back to opening a draft for review
@@ -243,7 +251,7 @@ async def open_email_compose(row: JobApplication, cl_text: str, send: bool = Fal
         if ok2:
             note2 += " " + (attach_cv_to_draft(cv_path)[1] if cv_path else "")
             return {"ok": True, "kind": "email", "to": email["to"],
-                    "message": f"自動發送失敗（{note}），已改為開 draft 俾你手動發送。{note2}",
+                    "message": f"自動發送失敗（{note}），已改為開 draft 俾你手動發送。{note2} {cv_tag}",
                     "submitted": False,
                     "preview": {"to": email["to"], "subject": email["subject"], "body": email["body"]}}
         return {"ok": False, "kind": "email_failed", "to": email["to"],
@@ -257,7 +265,7 @@ async def open_email_compose(row: JobApplication, cl_text: str, send: bool = Fal
         if cv_path:
             ok2, note2 = attach_cv_to_draft(cv_path)
             note += " " + note2
-        return {"ok": True, "kind": "email", "to": email["to"], "message": note,
+        return {"ok": True, "kind": "email", "to": email["to"], "message": f"{note} {cv_tag}",
                 "submitted": False,
                 "preview": {"to": email["to"], "subject": email["subject"], "body": email["body"]}}
 

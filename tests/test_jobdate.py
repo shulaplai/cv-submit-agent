@@ -119,7 +119,7 @@ def test_run_scan_filters_stale_drafts(db, monkeypatch):
     unknown = JobDraft(platform="offertoday", job_id="tok",
                        title="AI Developer", posted_at="")
 
-    async def fake_scrape(session, track="it", cfg=None):
+    async def fake_scrape(session, track="it", cfg=None, channels=None):
         return [fresh, stale, unknown]
 
     async def fake_get_browser(platform):
@@ -155,7 +155,7 @@ def test_run_scan_caps_at_max_jobs_fair_share(db, monkeypatch):
     ot = [JobDraft(platform="offertoday", job_id=f"tok{i}",
                    title="AI Developer", posted_at="") for i in range(3)]
 
-    async def fake_scrape(session, track="it", cfg=None):
+    async def fake_scrape(session, track="it", cfg=None, channels=None):
         return gov + ot
 
     async def fake_get_browser(platform):
@@ -186,7 +186,7 @@ def test_run_scan_cap_disabled_when_zero(db, monkeypatch):
     drafts = [JobDraft(platform="govhk", job_id=f"11-26-00003{i:02d}",
                        title="AI 工程師", posted_at="01/08/2026") for i in range(4)]
 
-    async def fake_scrape(session, track="it", cfg=None):
+    async def fake_scrape(session, track="it", cfg=None, channels=None):
         return drafts
 
     async def fake_get_browser(platform):
@@ -217,7 +217,7 @@ def test_run_scan_stop_persists_scraped_drafts(db, monkeypatch):
     second = JobDraft(platform="govhk", job_id="11-26-0000402",
                       title="AI 工程師", posted_at="01/08/2026")
 
-    async def fake_scrape(session, track="it", cfg=None):
+    async def fake_scrape(session, track="it", cfg=None, channels=None):
         scan_control.request_stop()  # stop requested DURING scraping
         return [first, second]
 
@@ -252,18 +252,18 @@ def test_run_scan_stop_between_platforms(db, monkeypatch):
     called = {"n": 0}
     state = {"stop": False}
 
-    async def scrape_a(session, track="it", cfg=None):
+    async def scrape_a(session, track="it", cfg=None, channels=None):
         called["n"] += 1
         state["stop"] = True  # request stop right after platform A completes
         return [JobDraft(platform="govhk", job_id="11-26-0000501",
                          title="AI 工程師", posted_at="01/08/2026")]
 
-    async def scrape_b(session, track="it", cfg=None):
+    async def scrape_b(session, track="it", cfg=None, channels=None):
         called["n"] += 1
         return [JobDraft(platform="offertoday", job_id="tokB",
                          title="AI Developer", posted_at="")]
 
-    async def scrape_c(session, track="it", cfg=None):
+    async def scrape_c(session, track="it", cfg=None, channels=None):
         called["n"] += 1
         return []
 
@@ -420,7 +420,7 @@ def test_run_scan_gbayes_uses_7day_window_others_14(db, monkeypatch):
     ot = JobDraft(platform="offertoday", job_id="tokMid",
                   title="AI Developer", posted_at="")  # 冇日期 -> 照收
 
-    async def fake_scrape(session, track="it", cfg=None):
+    async def fake_scrape(session, track="it", cfg=None, channels=None):
         return [gba, it, ot]
 
     async def fake_get_browser(platform):

@@ -40,6 +40,31 @@ DEFAULT_IT_KEYWORDS = [
     "測試", "技術支援", "桌面", "維護",
 ]
 
+# 「唔似 IT」嘅職位字眼：標題有呢啲就唔會入 IT 軌（除非同時有強 IT 字眼）。
+# 用嚟擋住好闊嘅 default 關鍵字（engineer／工程師／技術員／桌面…）造成嘅誤分類，
+# 例如 MECHANICAL ENGINEER、桌面排版操作員、工料測量師。
+DEFAULT_NON_IT_KEYWORDS = [
+    "mechanical", "civil", "structural", "electrical", "electronic", "building services",
+    "quantity surveying", "chemical", "production", "manufacturing", "logistics",
+    "sales", "marketing", "accounting", "clerk", "driver", "security guard",
+    "土木", "結構", "機械", "電機", "電子", "建築", "測量", "化驗", "生產", "製造",
+    "品質", "品管", "排版", "影音", "外勤", "保安", "清潔", "司機", "倉務", "物流",
+    "銷售", "營業", "市場", "會計", "文員", "接待",
+]
+
+# 「肯定係 IT」嘅字眼：就算標題有上面嘅排除字眼，有呢啲都照當 IT
+# （例：資訊保安工程師 = IT；機械工程師 = 一般）
+STRONG_IT_KEYWORDS = [
+    "ai", "developer", "programmer", "software", "python", "javascript", "typescript",
+    "java", "react", "node", "sql", "database", "devops", "cloud", "llm", "web",
+    "frontend", "backend", "full stack", "full-stack", "machine learning", "deep learning",
+    "network", "sysadmin", "system admin", "helpdesk", "help desk", "data center",
+    "cyber", "it ", "it support", "資訊", "程式", "編程", "軟件", "軟體", "系統",
+    "網絡", "網路", "雲端", "數據", "人工智能", "機器學習", "全棧", "前端", "後端",
+    "演算法", "計算機",
+]
+
+
 # Non-IT (一般) track: office / admin / customer-service style roles the
 # applicant might accept as backup. Broadly editable in Settings.
 DEFAULT_GENERAL_KEYWORDS = [
@@ -115,7 +140,16 @@ def title_matches(title: str, keywords: list[str]) -> bool:
     return any(match_keyword(k, title) for k in keywords)
 
 
-def classify(title: str, it_keywords: list[str] | None = None) -> str:
+def resolve_non_it_keywords(profile_text: str = "") -> list[str]:
+    """Effective non-IT exclusion keywords: profile -> .env -> built-in defaults."""
+    text = (profile_text or "").strip() or (settings.NON_IT_KEYWORDS or "").strip()
+    if text:
+        return parse_keywords(text)
+    return list(DEFAULT_NON_IT_KEYWORDS)
+
+
+def classify(title: str, it_keywords: list[str] | None = None,
+             non_it_keywords: list[str] | None = None) -> str:
     """Classify a job title into 'it' or 'general'.
 
     IT wins when the title matches the IT keywords; everything else is
@@ -123,7 +157,14 @@ def classify(title: str, it_keywords: list[str] | None = None) -> str:
     everywhere and would drown the general track.)
     """
     kws = it_keywords if it_keywords is not None else resolve_it_keywords()
-    return "it" if title_matches(title, kws) else "general"
+    if not title_matches(title, kws):
+        return "general"
+    # 排除字眼：標題似 non-IT（機械／土木／排版…）就唔算 IT，
+    # 除非同時有「肯定係 IT」嘅字眼。
+    excl = non_it_keywords if non_it_keywords is not None else resolve_non_it_keywords()
+    if title_matches(title, excl) and not title_matches(title, STRONG_IT_KEYWORDS):
+        return "general"
+    return "it"
 
 
 @dataclass
@@ -142,22 +183,24 @@ class TrackConfig:
     offertoday_max_per_search: int
     offertoday_search_terms: list[str] = field(default_factory=list)
     max_searches: int = 0     # OfferToday general: cap on keyword searches
+    non_it_keywords: list[str] = field(default_factory=list)  # 唔當 IT 嘅字眼
 
     @staticmethod
     def defaults(name: str) -> "TrackConfig":
         """Track config from pure settings/env — used when no Profile row exists."""
         it_kws = resolve_it_keywords()
+        non_it = resolve_non_it_keywords()
         if name == "it":
             return TrackConfig(
                 name="it", label="IT",
-                keywords=it_kws, it_keywords=it_kws,
+                keywords=it_kws, it_keywords=it_kws, non_it_keywords=non_it,
                 govhk_max_jobs=settings.GOVHK_IT_MAX_JOBS,
                 offertoday_max_per_search=settings.OFFERTODAY_MAX_PER_SEARCH,
             )
         general_kws = resolve_general_keywords()
         return TrackConfig(
             name="general", label="一般",
-            keywords=general_kws, it_keywords=it_kws,
+            keywords=general_kws, it_keywords=it_kws, non_it_keywords=non_it,
             govhk_max_jobs=settings.GOVHK_GENERAL_MAX_JOBS,
             offertoday_max_per_search=settings.OFFERTODAY_GENERAL_MAX_PER_SEARCH,
             offertoday_search_terms=(

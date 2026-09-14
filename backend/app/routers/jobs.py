@@ -29,6 +29,7 @@ from ..services.llm import LLMError
 from ..services.matcher import score_job
 from ..services.scanner import make_dup_key
 from ..services.jobdate import parse_posted_date
+from ..services.jobdate import parse_posted_date
 from ..services.scraper_base import get_browser
 from ..services.store import mark_applied
 
@@ -251,7 +252,7 @@ async def _run_batch(ids: list[int], auto: bool | None) -> None:
                         cl_text = latest.content
                     elif row.jd_text:
                         try:
-                            cv_text = get_cv_text(row.jd_language)
+                            cv_text = get_cv_text(row.jd_language, row.title)
                             job_dict = {"title": row.title, "company": row.company,
                                         "location": row.location, "salary_range": row.salary_range,
                                         "jd_text": row.jd_text, "short_desc": ""}
@@ -274,7 +275,8 @@ async def _run_batch(ids: list[int], auto: bool | None) -> None:
                         row.applied_at = row.applied_at or utcnow()
                         db.commit()
             except Exception as e:  # noqa: BLE001
-                entry["message"] = str(e)[:200]
+                from ..services.apply_bot import friendly_browser_error
+                entry["message"] = friendly_browser_error(e) or str(e)[:200]
             finally:
                 _batch_state["results"].append(entry)
                 _batch_state["done"] += 1
@@ -310,6 +312,75 @@ def email_templates():
 @router.get("/{job_id}", response_model=JobApplicationOut)
 def get_job(job_id: int, db: Session = Depends(get_db)):
     return _load(db, job_id)
+
+
+@router.post("/{job_id}/fetch-detail")
+async def fetch_job_detail(job_id: int, db: Session = Depends(get_db)):
+    """即刻去職位網站攞呢份工嘅完整 JD（詳情頁），順便更新刊登日期／公司／地點。
+
+    專為「列表快照冇 JD」嘅卡而設：用戶一撳入去就自動補，唔使等下次 scan，
+    亦唔會用 LLM（唔會扣 API 錢）。
+    """
+    from ..services.apply_bot import _is_closed_error
+    from ..services.scanner import _draft_from_row
+    from ..services.scraper_base import get_browser, repair_browsers
+
+    row = _load(db, job_id)
+    fetch_detail = {
+        "jobsdb": scraper_jobsdb.fetch_detail,
+        "offertoday": scraper_offertoday.fetch_detail,
+    }.get(row.platform)
+    if fetch_detail is None:
+        return {"ok": False, "updated": False,
+                "message": "呢個平台嘅 JD 喺掃描時已經入庫（政府工冇獨立詳情頁要補）。"}
+
+    async def _fetch_once():
+        session = await get_browser(row.platform)
+        return await fetch_detail(session, _draft_from_row(row))
+
+    try:
+        try:
+            draft = await _fetch_once()
+        except Exception as e:  # noqa: BLE001 — Chrome 被關 -> 自動修復再試一次
+            if not _is_closed_error(e):
+                raise
+            log.warning("detail fetch: browser closed for job %s — repairing", job_id)
+            await repair_browsers()
+            draft = await _fetch_once()
+    except Exception as e:  # noqa: BLE001
+        log.warning("fetch-detail failed for job %s: %s", job_id, e)
+        return {"ok": False, "updated": False,
+                "message": f"攞唔到詳情：{str(e)[:140]}（可以撳「載入 JD + 生成 CL」再試）"}
+
+    changed = []
+    if draft.jd_text and draft.jd_text != row.jd_text:
+        row.jd_text = draft.jd_text
+        changed.append("JD")
+    if draft.company and draft.company != row.company:
+        row.company = draft.company
+        changed.append("公司")
+    if draft.location and draft.location != row.location:
+        row.location = draft.location
+        changed.append("地點")
+    if draft.salary_range and draft.salary_range != row.salary_range:
+        row.salary_range = draft.salary_range
+        changed.append("薪酬")
+    if draft.posted_at and draft.posted_at != row.posted_at:
+        row.posted_at = draft.posted_at
+        row.posted_date = parse_posted_date(draft.posted_at)
+        changed.append("刊登日期")
+    if draft.external_url and not row.external_url:
+        row.external_url = draft.external_url
+        row.apply_method = "external_link"
+        changed.append("外部申請連結")
+    db.commit()
+    db.refresh(row)
+
+    if not changed:
+        return {"ok": True, "updated": False, "job": JobApplicationOut.model_validate(row),
+                "message": "網站而家冇新資料（JD 可能仲未刊登）。"}
+    return {"ok": True, "updated": True, "job": JobApplicationOut.model_validate(row),
+            "message": f"已更新：{'、'.join(changed)}"}
 
 
 @router.post("/{job_id}/refresh", response_model=JobApplicationOut)
@@ -369,7 +440,7 @@ async def refresh_job(job_id: int, db: Session = Depends(get_db)):
 
     if score >= settings.MATCH_THRESHOLD:
         try:
-            cv_text = get_cv_text(row.jd_language)
+            cv_text = get_cv_text(row.jd_language, row.title)
             content, _warning = await generate_cl_checked(
                 cv_text, row.jd_text or row.title, job_dict, row.jd_language
             )
@@ -414,7 +485,7 @@ async def regenerate_cl(job_id: int, payload: RegenerateCLLIn, db: Session = Dep
     job_dict = {"title": row.title, "company": row.company, "location": row.location,
                 "salary_range": row.salary_range, "jd_text": row.jd_text, "short_desc": ""}
     try:
-        cv_text = get_cv_text(row.jd_language)
+        cv_text = get_cv_text(row.jd_language, row.title)
         content, _warning = await generate_cl_checked(
             cv_text, row.jd_text, job_dict, row.jd_language,
             instructions=payload.instructions,

@@ -11,6 +11,7 @@
   - **一般 track**：OfferToday 關鍵字搜尋（`<關鍵字>-jobs`，每個字詞一個搜尋頁）、gov.hk **主 quickview**（`govhk_general`，全部職位類別，由新到舊，過濾一般關鍵字）
   - **每 2 日凌晨 03:00（香港時間）自動掃描**（`.env` 可改：`SCAN_HOUR` / `SCAN_DAY_INTERVAL`），起機唔會自動補掃；掃描期間每份工（攞 JD／LLM 評分）之間**隨機隔 4–6 秒**（`SCAN_JOB_DELAY_MIN_SECONDS` / `SCAN_JOB_DELAY_MAX_SECONDS`），避免太快被 OfferToday 等網站擋
 - 📅 **OfferToday 都有刊登日期喇**：OfferToday 詳情頁內嵌 JSON-LD（`datePosted`），`fetch_detail` 會抽返出嚟做刊登日期，過期（超過期限）嘅 OfferToday 工一樣會喺補齊/刷新後被過濾
+- 🗂️ **CV 版本自動揀（AI／Full-stack／Developer）**：申請時按**職位標題**揀版本——標題有 AI 字眼（`CV_AI_TITLE_KEYWORDS`，預設 AI／人工智能／機器學習／LLM／大模型／算法…）→ 交 **AI 版**；冇 AI 版 → **Full-stack 版**；連 Full-stack 都冇 → **Developer 版**；全部都冇 → 通用版（`cv_en` / `cv_zh`）。中英各一份（跟 JD 語言）。設定頁「CV 版本」有 6 個上載位；**OfferToday** 會喺「揀履歷」對話框按檔名（例如 `..._AI.pdf`、`..._FullStack.pdf`、`..._Developer.pdf`）揀返同一版本，CL 同自我介紹都會用返嗰個版本嘅 CV 內容生成。
 - ✍️ **Cover Letter 自動生成**：跟 JD 語言（英文 JD → 英文 CL；中文 JD → 繁中 CL），只可用 CV 事實（唔吹噓），UI 可編輯，每次儲存開新版本（歷史保留）；生成後自動驗證語言/長度，唔啱會重試一次
 - 📄 **全部工都會有 JD**：每次掃描會為「所有新入庫嘅工」攞埋完整 JD（唔使 LLM，順便抽埋 OfferToday 刊登日期），再為最多 20 份最舊未補嘅工補 JD（`DETAIL_BACKFILL_PER_SCAN`）——個職位台會逐步全部有職位介紹，唔再淨係頭 30 份先有
 - 🎯 **Match Score 過濾**：LLM 評分 0–100 + 理由；**低匹配工照樣全部顯示**（filter bar 可以一撳「低匹配」淨睇低分，或唔勾「顯示低匹配」隱藏）；**每次掃描設 LLM 預算**（預設 30 份，慳 API 錢），未處理嘅用「補齊」按鈕處理

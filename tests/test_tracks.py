@@ -1,11 +1,15 @@
 """Tests for the 一般 (non-IT) track channels + OfferToday publish date."""
 import asyncio
+from datetime import date, timedelta
 from pathlib import Path
 
 from app.services.classify import TrackConfig
 from app.services.scraper_base import JobDraft
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+# 時間免疫嘅刊登日期：gov.hk 一般渠用 14 日窗口，固定日期會隨時間過期。
+FRESH_D = (date.today() - timedelta(days=1)).strftime("%d/%m/%Y")
 
 
 # ------------------------------------------------------------ OfferToday date
@@ -190,7 +194,7 @@ def test_govhk_general_channel_filters_and_caps(monkeypatch):
 
     async def fake_fetch_detail(session, item, platform, category=""):
         return JobDraft(platform=platform, job_id=item["job_id"],
-                        title=item["title"], posted_at="30/08/2026",
+                        title=item["title"], posted_at=FRESH_D,
                         category=category)
 
     async def fake_human_delay(*a, **k):
@@ -232,7 +236,7 @@ def test_govhk_general_channel_caps_at_limit(monkeypatch):
 
     async def fake_fetch_detail(session, item, platform, category=""):
         return JobDraft(platform=platform, job_id=item["job_id"],
-                        title=item["title"], posted_at="30/08/2026",
+                        title=item["title"], posted_at=FRESH_D,
                         category=category)
 
     async def fake_human_delay(*a, **k):
@@ -295,7 +299,7 @@ def test_run_scan_drops_stale_offertoday_after_detail(db, monkeypatch):
     draft = JobDraft(platform="offertoday", job_id="tokOld",
                      title="AI Developer", posted_at="")  # date unknown at scrape
 
-    async def fake_scrape(session, track="it", cfg=None):
+    async def fake_scrape(session, track="it", cfg=None, channels=None):
         return [draft]
 
     async def fake_fetch_detail(session, d):
@@ -336,7 +340,7 @@ def test_run_scan_fetches_detail_for_all_new_rows(db, monkeypatch):
                        title="AI Developer", posted_at="") for i in range(3)]
     fetched = []
 
-    async def fake_scrape(session, track="it", cfg=None):
+    async def fake_scrape(session, track="it", cfg=None, channels=None):
         return drafts
 
     async def fake_fetch_detail(session, d):
@@ -388,7 +392,7 @@ def test_run_scan_enriches_all_it_rows(db, monkeypatch):
     drafts += [JobDraft(platform="offertoday", job_id=f"gen{i}",
                         title="文員", posted_at="", category="general") for i in range(3)]
 
-    async def fake_scrape(session, track="it", cfg=None):
+    async def fake_scrape(session, track="it", cfg=None, channels=None):
         return drafts
 
     async def fake_fetch_detail(session, d):
@@ -437,7 +441,7 @@ def test_run_scan_detail_backfill_fills_old_rows(db, monkeypatch):
     db.add(old)
     db.commit()
 
-    async def fake_scrape(session, track="it", cfg=None):
+    async def fake_scrape(session, track="it", cfg=None, channels=None):
         return []
 
     async def fake_fetch_detail(session, d):

@@ -300,7 +300,7 @@ async def test_auto_submit_aborts_without_cl():
 async def test_auto_submit_aborts_without_cv(monkeypatch):
     from app.services import apply_bot
 
-    monkeypatch.setattr(apply_bot, "_cv_path_for", lambda lang: "/tmp/cv_en.pdf")
+    monkeypatch.setattr(apply_bot, "_cv_path_for", lambda lang, title="": "/tmp/cv_en.pdf")
     monkeypatch.setattr(apply_bot, "_cv_exists", lambda p: False)
     page = FakePage()
     res = await _auto_submit_platform(page, FakeRow(), "CL text")
@@ -311,7 +311,7 @@ async def test_auto_submit_aborts_without_cv(monkeypatch):
 async def test_auto_submit_happy_path(monkeypatch):
     from app.services import apply_bot
 
-    monkeypatch.setattr(apply_bot, "_cv_path_for", lambda lang: "/tmp/cv_en.pdf")
+    monkeypatch.setattr(apply_bot, "_cv_path_for", lambda lang, title="": "/tmp/cv_en.pdf")
     monkeypatch.setattr(apply_bot, "_cv_exists", lambda p: True)
 
     page = FakePage(url="https://hk.jobsdb.com/job/123/apply")
@@ -331,7 +331,7 @@ async def test_auto_submit_happy_path(monkeypatch):
 async def test_auto_submit_detects_form_error(monkeypatch):
     from app.services import apply_bot
 
-    monkeypatch.setattr(apply_bot, "_cv_path_for", lambda lang: "/tmp/cv_en.pdf")
+    monkeypatch.setattr(apply_bot, "_cv_path_for", lambda lang, title="": "/tmp/cv_en.pdf")
     monkeypatch.setattr(apply_bot, "_cv_exists", lambda p: True)
 
     page = FakePage(url="https://hk.jobsdb.com/job/123/apply")
@@ -348,7 +348,7 @@ async def test_auto_submit_detects_form_error(monkeypatch):
 async def test_prefill_attaches_cv(monkeypatch):
     from app.services import apply_bot
 
-    monkeypatch.setattr(apply_bot, "_cv_path_for", lambda lang: "/tmp/cv_en.pdf")
+    monkeypatch.setattr(apply_bot, "_cv_path_for", lambda lang, title="": "/tmp/cv_en.pdf")
     monkeypatch.setattr(apply_bot, "_cv_exists", lambda p: True)
 
     page = FakePage(url="https://hk.jobsdb.com/job/123/apply")
@@ -385,7 +385,7 @@ async def test_jobsdb_semauto_attaches_cv(monkeypatch):
         return FakeSession()
 
     monkeypatch.setattr(apply_bot, "get_browser", fake_get_browser)
-    monkeypatch.setattr(apply_bot, "_cv_path_for", lambda lang: "/tmp/cv_en.pdf")
+    monkeypatch.setattr(apply_bot, "_cv_path_for", lambda lang, title="": "/tmp/cv_en.pdf")
     monkeypatch.setattr(apply_bot, "_cv_exists", lambda p: True)
 
     res = await _jobsdb(FakeRow(), "CL text", auto=False)

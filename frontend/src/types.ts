@@ -73,13 +73,17 @@ export interface ScanStatus {
     stopped: boolean;
     errors: string[];
     track: string;
+    channels?: string[];
     tracks: Record<string, { scanned: number; new_jobs: number; skipped_old: number; capped: number }>;
   } | null;
   last_backfill: { at: string; processed: number } | null;
+  last_jd_backfill?: { at: string; processed: number; left: number } | null;
   progress: { platform: string; phase: string; count: number };
   last_error: string | null;
   stop_requested: boolean;
   track: string | null;
+  channels?: string[];
+  channel_labels?: Record<string, string>;
 }
 
 export interface Stats {
@@ -98,6 +102,12 @@ export interface Profile {
   email: string;
   cv_en_path: string;
   cv_zh_path: string;
+  cv_ai_en_path: string;
+  cv_ai_zh_path: string;
+  cv_fullstack_en_path: string;
+  cv_fullstack_zh_path: string;
+  cv_developer_en_path: string;
+  cv_developer_zh_path: string;
   skills_json: string;
   gba_age_under_29: boolean;
   gba_edu_associate_degree: boolean;
@@ -116,7 +126,9 @@ export interface Profile {
   it_track_enabled: boolean;
   general_track_enabled: boolean;
   general_job_keywords: string;
+  non_it_keywords: string;
   offertoday_general_search_terms: string;
+  offertoday_it_search_terms: string;
   govhk_it_max_jobs: number;
   govhk_general_max_jobs: number;
   offertoday_it_max_per_search: number;

@@ -1,3 +1,9 @@
+export type CVKind =
+  | "en" | "zh"
+  | "ai_en" | "ai_zh"
+  | "fullstack_en" | "fullstack_zh"
+  | "developer_en" | "developer_zh";
+
 import type { BatchStatus, EmailPreview, EmailTemplate, Job, JobList, Profile, ScanStatus, Stats } from "./types";
 
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
@@ -28,6 +34,14 @@ export const api = {
     return req<JobList>(`/api/jobs?${q.toString()}`);
   },
   getJob: (id: number) => req<Job>(`/api/jobs/${id}`),
+  fetchJobDetail: (id: number) =>
+    req<{ ok: boolean; updated: boolean; job?: Job; message: string }>(
+      `/api/jobs/${id}/fetch-detail`, { method: "POST" }),
+  backfillJd: (limit = 25) =>
+    req<{ started: boolean; limit?: number; message: string }>("/api/scan/backfill-jd", {
+      method: "POST",
+      body: JSON.stringify({ limit }),
+    }),
   refreshJob: (id: number) => req<Job>(`/api/jobs/${id}/refresh`, { method: "POST" }),
   saveCoverLetter: (id: number, content: string) =>
     req<Job>(`/api/jobs/${id}/cover-letters`, {
@@ -48,10 +62,11 @@ export const api = {
   updateJob: (id: number, patch: Record<string, unknown>) =>
     req<Job>(`/api/jobs/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   scanStatus: () => req<ScanStatus>("/api/scan/status"),
-  startScan: (track?: "all" | "it" | "general") =>
+  startScan: (track?: "all" | "it" | "general", channels?: string[]) =>
     req<{ started: boolean; message: string }>("/api/scan", {
       method: "POST",
-      body: JSON.stringify({ track: track || "all" }),
+      // channels 空 array = 全部渠道
+      body: JSON.stringify({ track: track || "all", channels: channels || [] }),
     }),
   stopScan: () => req<{ stopped: boolean; message: string }>("/api/scan/stop", { method: "POST" }),
   backfill: () => req<{ started: boolean; message: string }>("/api/scan/backfill", { method: "POST" }),
@@ -78,7 +93,7 @@ export const api = {
   emailPreview: (id: number, template?: string) =>
     req<EmailPreview>(`/api/jobs/${id}/email-preview${template ? `?template=${encodeURIComponent(template)}` : ""}`),
   emailTemplates: () => req<{ templates: EmailTemplate[] }>("/api/jobs/email-templates"),
-  uploadCV: (kind: "en" | "zh", file: File) => {
+  uploadCV: (kind: CVKind, file: File) => {
     const fd = new FormData();
     fd.append("kind", kind);
     fd.append("file", file);

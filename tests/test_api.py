@@ -150,7 +150,7 @@ def test_scan_stop_endpoint_while_running(client, monkeypatch):
     """行緊時撳暫停 -> 設定 stop flag，狀態有 stop_requested。"""
     from app.services import scan_control
 
-    async def fake_run_scan(db, progress, track=None):
+    async def fake_run_scan(db, progress, track=None, channels=None):
         scan_control.request_stop()
         from app.services.scanner import ScanSummary
         s = ScanSummary(stopped=True, scanned=1)
@@ -211,7 +211,7 @@ def test_scan_start_accepts_track_and_rejects_bad(client, monkeypatch):
 
     seen_track = {}
 
-    async def fake_run_scan(db, progress, track=None):
+    async def fake_run_scan(db, progress, track=None, channels=None):
         seen_track["track"] = track
         return ScanSummary()
 

@@ -19,7 +19,8 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..models import CoverLetter, JobApplication, Profile
 from . import scraper_govhk, scraper_jobsdb, scraper_offertoday
-from .classify import TrackConfig, parse_keywords, resolve_general_keywords, resolve_it_keywords
+from .classify import (TrackConfig, parse_keywords, resolve_general_keywords,
+                       resolve_it_keywords, resolve_non_it_keywords)
 from .cl_generator import generate_cl_checked
 from .cv_loader import get_cv_text, load_skills
 from .language import detect_language
@@ -45,6 +46,15 @@ def _platform_scrapers() -> tuple:
 
 
 PLATFORM_SCRAPERS = _platform_scrapers()
+
+# 渠道選擇：scan 除咗揀 IT／一般 track，亦可以逐個渠道揀（OfferToday、政府、
+# 大灣區計劃…）。API / UI 共用同一套 key；空集合 = 全部渠道。
+CHANNELS = ("offertoday", "govhk_gbayes", "govhk_it", "govhk_general", "jobsdb")
+# 每個 track 之下，gov.hk 實際會跑嘅子渠道
+TRACK_GOVHK_CHANNELS = {
+    "it": ("govhk_gbayes", "govhk_it"),
+    "general": ("govhk_general",),
+}
 
 _WS_RE = re.compile(r"\s+")
 
@@ -99,21 +109,26 @@ def load_track_configs(db: Session, only: str | None = None) -> list[TrackConfig
     """
     profile = db.get(Profile, 1)
     it_kws = resolve_it_keywords(profile.it_keywords if profile else "")
+    non_it_kws = resolve_non_it_keywords(profile.non_it_keywords if profile else "")
     general_kws = resolve_general_keywords(profile.general_job_keywords if profile else "")
 
     cfg_it = TrackConfig(
         name="it", label="IT",
-        keywords=it_kws, it_keywords=it_kws,
+        keywords=it_kws, it_keywords=it_kws, non_it_keywords=non_it_kws,
         govhk_max_jobs=(profile.govhk_it_max_jobs if profile else 0) or settings.GOVHK_IT_MAX_JOBS,
         offertoday_max_per_search=(profile.offertoday_it_max_per_search if profile else 0)
         or settings.OFFERTODAY_MAX_PER_SEARCH,
-        # 額外 IT 關鍵字搜尋（AI agent 等）— 喺 3 個分類頁之上再開
-        offertoday_search_terms=parse_keywords(settings.OFFERTODAY_IT_SEARCH_TERMS),
+        # 額外 IT 關鍵字搜尋（AI agent 等）— 喺 3 個分類頁之上再開。
+        # 用戶可以喺 UI 自定（profile），留空先用 .env。
+        offertoday_search_terms=(
+            parse_keywords(profile.offertoday_it_search_terms if profile else "")
+            or parse_keywords(settings.OFFERTODAY_IT_SEARCH_TERMS)
+        ),
         max_searches=settings.OFFERTODAY_IT_MAX_SEARCHES,
     )
     cfg_general = TrackConfig(
         name="general", label="一般",
-        keywords=general_kws, it_keywords=it_kws,
+        keywords=general_kws, it_keywords=it_kws, non_it_keywords=non_it_kws,
         govhk_max_jobs=(profile.govhk_general_max_jobs if profile else 0)
         or settings.GOVHK_GENERAL_MAX_JOBS,
         offertoday_max_per_search=(profile.offertoday_general_max_per_search if profile else 0)
@@ -157,8 +172,12 @@ class ScanSummary:
 
 
 async def run_scan(db: Session, progress: dict | None = None,
-                   track: str | None = None) -> ScanSummary:
+                   track: str | None = None,
+                   channels: list[str] | tuple[str, ...] | None = None) -> ScanSummary:
     """Full scan. `progress` is a shared dict mutated in place for live UI updates.
+
+    ``channels`` narrows the scan to specific sources (OfferToday / 政府 IT /
+    政府一般 / 大灣區計劃 / JobsDB). Empty or None = every channel (default).
 
     Polls ``scan_control.stop_requested()`` between tracks/platforms (and
     between pages inside the scrapers). When a stop is requested the loop
@@ -167,6 +186,7 @@ async def run_scan(db: Session, progress: dict | None = None,
     """
     summary = ScanSummary()
     all_drafts = []
+    selected = {c.strip() for c in (channels or []) if c and c.strip()}
 
     def set_progress(platform: str, phase: str, count: int):
         if progress is not None:
@@ -184,6 +204,16 @@ async def run_scan(db: Session, progress: dict | None = None,
         for platform, scrape_fn, _ in PLATFORM_SCRAPERS:
             if platform == "govhk" and not settings.GOVHK_ENABLED:
                 continue
+            # 渠道過濾：gov.hk 底下嘅子渠道要再按 track 收窄
+            govhk_sub: list[str] | None = None
+            if platform == "govhk":
+                allowed = set(TRACK_GOVHK_CHANNELS.get(tcfg.name, ()))
+                wanted = allowed if not selected else (selected & allowed)
+                if not wanted:
+                    continue      # 呢個 track 下面冇揀到任何 gov.hk 渠道
+                govhk_sub = sorted(wanted)
+            elif selected and platform not in selected:
+                continue          # 冇揀到呢個平台
             if scan_control.stop_requested():
                 log.info("scan stop requested — breaking before platform %s", platform)
                 summary.stopped = True
@@ -191,7 +221,11 @@ async def run_scan(db: Session, progress: dict | None = None,
             try:
                 set_progress(platform, f"scraping ({tcfg.label})", 0)
                 session = await get_browser(platform)
-                drafts = await scrape_fn(session, track=tcfg.name, cfg=tcfg)
+                if platform == "govhk":
+                    drafts = await scrape_fn(session, track=tcfg.name, cfg=tcfg,
+                                             channels=govhk_sub)
+                else:
+                    drafts = await scrape_fn(session, track=tcfg.name, cfg=tcfg)
                 t_drafts.extend(drafts)
                 summary.scanned += len(drafts)
                 set_progress(platform, f"scraped ({tcfg.label})", len(drafts))
@@ -301,22 +335,44 @@ async def run_scan(db: Session, progress: dict | None = None,
         dropped_by_track: dict[str, int] = {}
         fetch_count = {"n": 0}
 
-        async def fill_detail(row: JobApplication) -> None:
+        async def fill_detail(row: JobApplication, attempts: int = 2) -> None:
+            """攞一份工嘅完整 JD。
+
+            用戶要求：新工入庫時就要連 JD 一齊攞到，所以如果中途出錯（例如
+            CDP／瀏覽器一閃）會自動重試，重試之前照跟 4–6 秒 pacing，唔會
+            突然連環開頁。試完都失敗先記錄落 errors，卡片會顯示「未有 JD」，
+            你想睇就逐份撳「🔄 更新 JD」。
+            """
             async with sem:
-                try:
-                    if await _fill_detail(db, row, _fetch_detail_for(row.platform), pace=pace):
-                        dropped_ids.add(row.id)
-                        summary.skipped_old += 1
-                        dropped_by_track[row.category] = dropped_by_track.get(row.category, 0) + 1
+                for attempt in range(1, attempts + 1):
+                    try:
+                        if await _fill_detail(db, row, _fetch_detail_for(row.platform), pace=pace):
+                            dropped_ids.add(row.id)
+                            summary.skipped_old += 1
+                            dropped_by_track[row.category] = dropped_by_track.get(row.category, 0) + 1
+                            return
+                        if row.jd_text:
+                            summary.details_fetched += 1
+                            fetch_count["n"] += 1
+                            set_progress(row.platform, "攞緊 JD", fetch_count["n"])
+                        elif attempt < attempts:
+                            # 冇例外但今次攞唔到（例如頁面未 load 完）— 等一等再試
+                            log.info("no JD yet for %s/%s (第 %d/%d 次)，重試",
+                                     row.platform, row.job_id_on_platform, attempt, attempts)
+                            await pace.wait()
+                            continue
                         return
-                    if row.jd_text:
-                        summary.details_fetched += 1
-                        fetch_count["n"] += 1
-                        set_progress(row.platform, "攞緊 JD", fetch_count["n"])
-                except Exception as e:  # noqa: BLE001
-                    log.warning("detail fetch failed for %s/%s: %s",
-                                row.platform, row.job_id_on_platform, e)
-                    summary.errors.append(f"{row.platform}/{row.job_id_on_platform}: {e}")
+                    except Exception as e:  # noqa: BLE001
+                        if attempt < attempts:
+                            log.warning("detail fetch failed for %s/%s (第 %d/%d 次，等陣重試): %s",
+                                        row.platform, row.job_id_on_platform,
+                                        attempt, attempts, e)
+                            await pace.wait()
+                            continue
+                        log.warning("detail fetch failed for %s/%s (試咗 %d 次，放棄): %s",
+                                    row.platform, row.job_id_on_platform, attempt, e)
+                        summary.errors.append(f"{row.platform}/{row.job_id_on_platform}: {e}")
+                        return
 
         if new_rows:
             await asyncio.gather(*(fill_detail(r) for r in new_rows))
@@ -383,12 +439,15 @@ def _detail_backfill_candidates(db: Session, limit: int) -> list[JobApplication]
 
 
 async def _fill_detail(db: Session, row: JobApplication, fetch_detail,
-                       pace: _PaceGate | None = None) -> bool:
+                       pace: _PaceGate | None = None, prune: bool = True) -> bool:
     """Fetch the full JD for one row if missing (jobsdb/offertoday only).
 
     Also records the posted date (incl. OfferToday's JSON-LD datePosted) and
     returns True when the row was DELETED as stale (> MAX_JOB_AGE_DAYS).
     ``pace`` (optional) spaces consecutive page opens during a scan.
+
+    ``prune=False``（補 JD 舊記錄時用）永遠唔會刪行：已申請嘅記錄係你嘅申請
+    歷史，其他就只標記為過期（low_match）而唔係刪走。
     """
     if row.jd_text or fetch_detail is None or row.platform not in ("jobsdb", "offertoday"):
         return False
@@ -411,11 +470,21 @@ async def _fill_detail(db: Session, row: JobApplication, fetch_detail,
         max_age = (settings.GBAY_MAX_JOB_AGE_DAYS if row.platform == "govhk_gbayes"
                    else settings.MAX_JOB_AGE_DAYS)
         if max_age > 0 and not is_fresh(draft.posted_at, max_age):
-            log.info("dropping stale job %s/%s after detail fetch (posted %r, >%sd old)",
-                     row.platform, row.job_id_on_platform, draft.posted_at, max_age)
-            db.delete(row)
+            if prune and row.status != "applied":
+                log.info("dropping stale job %s/%s after detail fetch (posted %r, >%sd old)",
+                         row.platform, row.job_id_on_platform, draft.posted_at, max_age)
+                db.delete(row)
+                db.flush()
+                return True
+            # 保留記錄：已申請嘅工係你嘅申請歷史，唔可以因為過期就刪；補 JD 模式
+            # （prune=False）亦一律唔刪，改為標記過期。
+            log.info("keeping stale job %s/%s (status=%s, posted %r, >%sd old)",
+                     row.platform, row.job_id_on_platform, row.status, draft.posted_at, max_age)
+            if row.status != "applied":
+                row.status = "low_match"
+                row.match_reason = f"刊登日期已超過 {max_age} 日，已過期"
             db.flush()
-            return True
+            return False
     if draft.external_url:
         row.external_url = draft.external_url
         row.apply_method = "external_link"
@@ -483,7 +552,7 @@ async def _enrich_one(db: Session, row: JobApplication, platform: str,
 
     # 2. generate CL (with quality check + one retry)
     try:
-        cv_text = get_cv_text(row.jd_language)
+        cv_text = get_cv_text(row.jd_language, row.title)
         content, warning = await generate_cl_checked(
             cv_text, row.jd_text or row.title, job_dict, row.jd_language
         )

@@ -69,6 +69,32 @@ export function JobDetail({
     [onChanged]
   );
 
+  // 一撳入冇 JD 嘅卡就即刻去網站攞詳情（唔用 LLM，唔會扣 API 錢）
+  const [jdLoading, setJdLoading] = useState(false);
+  const [jdTried, setJdTried] = useState(false);
+  useEffect(() => {
+    if (job.jd_text || jdTried) return;
+    let alive = true;
+    setJdTried(true);
+    setJdLoading(true);
+    api.fetchJobDetail(job.id)
+      .then(async (r) => {
+        if (!alive) return;
+        if (r.job) onChanged(r.job);
+        else await refresh(job.id);
+        showNote(r.message || "已更新職位詳情", r.updated ? "ok" : "info");
+      })
+      .catch(async (e) => {
+        if (!alive) return;
+        showNote(`自動攞詳情失敗：${(e as Error).message}`, "err");
+      })
+      .finally(() => alive && setJdLoading(false));
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [job.id]);
+
   const doRefresh = async () => {
     setBusy(true);
     try {
@@ -270,10 +296,51 @@ export function JobDetail({
       <div className="section">
         <h4>職位描述（JD 快照）</h4>
         {job.jd_text ? (
-          <div className="jd-body">{job.jd_text}</div>
+          <>
+            <div className="jd-body">{job.jd_text}</div>
+            <button
+              className="btn"
+              onClick={async () => {
+                setBusy(true);
+                try {
+                  const r = await api.fetchJobDetail(job.id);
+                  if (r.job) onChanged(r.job);
+                  showNote(r.message || "已重新整理 JD", r.updated ? "ok" : "info");
+                } catch (e) {
+                  showNote(`攞詳情失敗：${(e as Error).message}`, "err");
+                } finally {
+                  setBusy(false);
+                }
+              }}
+              disabled={busy || jdLoading}
+              title="即刻去職位網站重新攞一次完整 JD"
+            >
+              🔄 更新 JD
+            </button>
+          </>
+        ) : jdLoading ? (
+          <div className="note-inline">⏳ 即刻去網站攞緊職位詳情…</div>
         ) : (
           <div className="note-inline">
             JD 未載入（列表快照）。{" "}
+            <button
+              className="btn"
+              onClick={async () => {
+                setJdLoading(true);
+                try {
+                  const r = await api.fetchJobDetail(job.id);
+                  if (r.job) onChanged(r.job);
+                  showNote(r.message || "已更新職位詳情", r.updated ? "ok" : "info");
+                } catch (e) {
+                  showNote(`攞詳情失敗：${(e as Error).message}`, "err");
+                } finally {
+                  setJdLoading(false);
+                }
+              }}
+              disabled={busy || jdLoading}
+            >
+              只攞 JD（唔用 LLM）
+            </button>{" "}
             <button className="btn" onClick={doRefresh} disabled={busy}>
               載入 JD + 生成 CL
             </button>

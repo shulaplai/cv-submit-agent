@@ -61,7 +61,7 @@ def test_run_scan_paces_detail_fetches(db, monkeypatch):
                        title="AI Developer", posted_at="") for i in range(3)]
     stamps = []
 
-    async def fake_scrape(session, track="it", cfg=None):
+    async def fake_scrape(session, track="it", cfg=None, channels=None):
         return drafts
 
     async def fake_fetch_detail(session, d):

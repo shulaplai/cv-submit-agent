@@ -352,6 +352,37 @@ input.search:focus { border-color: var(--accent); }
   color: var(--ink-faint);
   margin-left: 4px;
 }
+/* 設定頁：CV 版本上載列 */
+.cv-variant-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+.cv-variant-label {
+  min-width: 130px;
+  font-size: 12.5px;
+}
+.cv-variant-path {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 掃描渠道 chips（側邊欄） */
+.scan-channels { margin-top: 10px; }
+.scan-channels .chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.scan-channels .chip-btn {
+  font-size: 11px;
+  padding: 4px 8px;
+}
 input.num-input {
   font-family: var(--mono);
   font-size: 12px;
