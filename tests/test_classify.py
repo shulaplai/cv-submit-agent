@@ -143,7 +143,8 @@ def test_run_scan_track_general_only(db, monkeypatch):
     summary = asyncio.run(scanner.run_scan(db, {}, track="general"))
     assert calls == ["general"]
     assert summary.tracks == {"general": {"scanned": 1, "new_jobs": 1,
-                                          "skipped_old": 0, "capped": 0}}
+                                          "skipped_old": 0, "skipped_location": 0,
+                                          "capped": 0}}
 
 
 def test_run_scan_respects_enable_toggles(db, monkeypatch):

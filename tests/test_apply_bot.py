@@ -522,7 +522,8 @@ def test_is_it_job():
 async def test_offertoday_intro_it_vs_general(monkeypatch):
     from app.services import apply_bot
 
-    cfg = {"intro_it_zh": "", "intro_it_en": "", "intro_general_zh": "", "intro_general_en": ""}
+    cfg = {"intro_it_zh": "", "intro_it_en": "", "intro_general_zh": "",
+           "intro_general_en": "", "intro_ai_zh": "", "intro_ai_en": ""}
 
     # saved value wins (no AI call)
     cfg_saved = dict(cfg, intro_general_zh="我嘅自訂一般簡介")
@@ -531,9 +532,9 @@ async def test_offertoday_intro_it_vs_general(monkeypatch):
     gen_row.jd_language = "zh"
     assert await _offertoday_intro(gen_row, cfg_saved) == "我嘅自訂一般簡介"
 
-    # empty -> AI-generated (mock the LLM)
-    async def fake_gen(lang, is_it):
-        return "AI_IT_ZH" if is_it else "AI_GENERAL_ZH"
+    # empty -> AI-generated (mock the LLM); topic: ai / it / general
+    async def fake_gen(lang, topic="general"):
+        return f"AI_{topic.upper()}_{lang.upper()}"
     monkeypatch.setattr(apply_bot, "generate_after_cv_intro", fake_gen)
 
     it_row = FakeRow()
@@ -547,8 +548,190 @@ async def test_offertoday_intro_it_vs_general(monkeypatch):
     assert await _offertoday_intro(gen_row2, cfg) == "AI_GENERAL_ZH"
 
     # AI fails -> fall back to default template
-    async def fail_gen(lang, is_it):
+    async def fail_gen(lang, topic="general"):
         raise RuntimeError("llm down")
     monkeypatch.setattr(apply_bot, "generate_after_cv_intro", fail_gen)
     fallback = await _offertoday_intro(gen_row2, cfg)
     assert len(fallback) > 20 and "程式" not in fallback
+
+
+async def test_offertoday_intro_ai_agent_ladder(monkeypatch):
+    """AI 職位 -> AI Agent 版；AI 版留空 -> 退回 IT 版 -> 再冇 -> AI 生成。"""
+    from app.services import apply_bot
+
+    cfg = {"intro_it_zh": "IT版中文", "intro_it_en": "IT版英文",
+           "intro_general_zh": "一般版中文", "intro_general_en": "",
+           "intro_ai_zh": "AI版中文", "intro_ai_en": ""}
+
+    ai_row = FakeRow()
+    ai_row.title = "AI Engineer"
+    ai_row.jd_language = "zh"
+    assert await _offertoday_intro(ai_row, cfg) == "AI版中文"
+
+    # 英文 JD + AI 版英文留空 -> 退回 IT 版英文
+    ai_row_en = FakeRow()
+    ai_row_en.title = "AI Agent Developer"
+    ai_row_en.jd_language = "en"
+    assert await _offertoday_intro(ai_row_en, cfg) == "IT版英文"
+
+    # 非 AI 嘅 IT 工唔會用到 AI 版
+    it_row = FakeRow()
+    it_row.title = "Backend Developer"
+    it_row.jd_language = "zh"
+    assert await _offertoday_intro(it_row, cfg) == "IT版中文"
+
+    # 全部都冇填 -> AI 生成，topic 一定係 ai
+    seen = {}
+
+    async def fake_gen(lang, topic="general"):
+        seen["topic"] = topic
+        seen["lang"] = lang
+        return "生成嘅 AI 版"
+    monkeypatch.setattr(apply_bot, "generate_after_cv_intro", fake_gen)
+    empty_cfg = {k: "" for k in cfg}
+    ai_row2 = FakeRow()
+    ai_row2.title = "機器學習工程師"
+    ai_row2.jd_language = "en"
+    assert await _offertoday_intro(ai_row2, empty_cfg) == "生成嘅 AI 版"
+    assert seen == {"topic": "ai", "lang": "en"}
+
+
+def test_intro_topic_picks_ai_from_title():
+    from app.services.apply_bot import intro_topic
+
+    ai = FakeRow(); ai.title = "AI Native Software Developer"
+    assert intro_topic(ai) == "ai"
+    it = FakeRow(); it.title = "Software Engineer"
+    assert intro_topic(it) == "it"
+    other = FakeRow(); other.title = "Customer Service Officer"
+    assert intro_topic(other) == "general"
+
+
+# ------------------- OfferToday 揀履歷：4 類檔名關鍵字（AI／IT／一般中／一般英）
+
+def _kw_cfg(ai="", it="", zh="", en=""):
+    return {"cv_ai_kw": ai, "cv_it_kw": it, "cv_zh_kw": zh, "cv_en_kw": en}
+
+
+def test_cv_keyword_plan_ladder():
+    from app.services.apply_bot import offertoday_cv_keyword_plan
+
+    cfg = _kw_cfg(ai="AI", it="IT", zh="中文", en="English")
+
+    ai_row = FakeRow(); ai_row.title = "AI Engineer"; ai_row.jd_language = "zh"
+    assert offertoday_cv_keyword_plan(ai_row, cfg) == [
+        ("AI 版", "AI"), ("IT 版", "IT"), ("一般中文版", "中文")]
+
+    it_row = FakeRow(); it_row.title = "Backend Developer"; it_row.jd_language = "en"
+    assert offertoday_cv_keyword_plan(it_row, cfg) == [
+        ("IT 版", "IT"), ("一般英文版", "English")]
+
+    gen_row = FakeRow(); gen_row.title = "Customer Service Officer"; gen_row.jd_language = "zh"
+    assert offertoday_cv_keyword_plan(gen_row, cfg) == [("一般中文版", "中文")]
+
+
+def test_cv_keyword_plan_skips_empty_levels():
+    from app.services.apply_bot import offertoday_cv_keyword_plan
+
+    ai_row = FakeRow(); ai_row.title = "AI Engineer"; ai_row.jd_language = "zh"
+    # AI／IT 冇填 -> 只剩一般
+    assert offertoday_cv_keyword_plan(ai_row, _kw_cfg(zh="中文")) == [("一般中文版", "中文")]
+    # 全部冇填 -> 空 plan（會用內建自動判斷）
+    assert offertoday_cv_keyword_plan(ai_row, _kw_cfg()) == []
+
+
+async def _pick_with(filenames, plan, language="zh", title="AI Engineer"):
+    page = FakePage()
+    page.add("button:has-text('發履歷')", FakeElem(text="發履歷"))
+    elems = {}
+    for fn in filenames:
+        e = FakeElem(text=fn)
+        elems[fn] = e
+        page.add("[role='dialog'] p.MuiTypography-noWrap", e)
+    picked = await _offertoday_pick_cv(page, language, title=title, plan=plan)
+    clicked = [fn for fn, e in elems.items() if e.clicked]
+    return picked, clicked
+
+
+async def test_pick_cv_ai_job_prefers_ai_keyword():
+    """⚠ 關鍵字 "AI" 唔可以撞到用戶名 "Lai"（lai_shulap.pdf 含 "ai"）。"""
+    plan = [("AI 版", "AI"), ("IT 版", "IT"), ("一般中文版", "中文")]
+    picked, clicked = await _pick_with(
+        ["LaiShuLap_中文.pdf", "LaiShuLap_IT.pdf", "LaiShuLap_AI.pdf"], plan)
+    assert clicked == ["LaiShuLap_AI.pdf"]
+
+
+async def test_pick_cv_keyword_never_matches_inside_a_name():
+    """用戶名含 "ai"（Lai）唔可以當成 AI 版；冇命中就落返語言 fallback（揀中文版）。"""
+    plan = [("AI 版", "AI")]
+    _, clicked = await _pick_with(["LaiShuLap_Resume.pdf", "LaiShuLap_中文.pdf"], plan)
+    assert clicked == ["LaiShuLap_中文.pdf"]              # 靠 JD 語言，而唔係誤中 AI
+
+
+def test_keyword_boundary_on_cv_filenames():
+    """檔名比對用詞邊界：lai 入面嘅 "ai" 唔算數。"""
+    from app.services.classify import match_keyword
+
+    assert match_keyword("AI", "lai_shulap_ai.pdf") is True
+    assert match_keyword("AI", "LaiShuLap_AI.pdf") is True
+    assert match_keyword("AI", "lai_shulap_resume.pdf") is False
+    assert match_keyword("IT", "lai_shulap_it_cv.pdf") is True
+    assert match_keyword("IT", "lai_shulap_cv.pdf") is False
+    assert match_keyword("中文", "lai_shulap_中文.pdf") is True    # CJK 用子字串
+
+
+async def test_pick_cv_cjk_keyword_matches_substring():
+    plan = [("一般中文版", "中文")]
+    _, clicked = await _pick_with(["LaiShuLap_中文版_CV.pdf"], plan, title="文員")
+    assert clicked == ["LaiShuLap_中文版_CV.pdf"]
+
+
+async def test_pick_cv_ai_job_falls_back_to_it():
+    plan = [("AI 版", "AI"), ("IT 版", "IT"), ("一般中文版", "中文")]
+    picked, clicked = await _pick_with(["LaiShuLap_中文.pdf", "LaiShuLap_IT.pdf"], plan)
+    assert clicked == ["LaiShuLap_IT.pdf"]
+
+
+async def test_pick_cv_ai_job_falls_back_to_general():
+    plan = [("AI 版", "AI"), ("IT 版", "IT"), ("一般中文版", "中文")]
+    picked, clicked = await _pick_with(["LaiShuLap_中文.pdf", "Resume_2025.pdf"], plan)
+    assert clicked == ["LaiShuLap_中文.pdf"]
+
+
+async def test_pick_cv_it_job_uses_it_keyword_not_ai():
+    """非 AI 嘅 IT 工唔應該揀 AI 版。"""
+    plan = [("IT 版", "IT"), ("一般英文版", "English")]
+    picked, clicked = await _pick_with(["LaiShuLap_AI.pdf", "LaiShuLap_IT.pdf"],
+                                       plan, language="en", title="Backend Developer")
+    assert clicked == ["LaiShuLap_IT.pdf"]
+
+
+async def test_pick_cv_general_job_uses_language_keyword():
+    plan_zh = [("一般中文版", "中文")]
+    _, clicked = await _pick_with(["CV_English.pdf", "CV_中文.pdf"], plan_zh, title="文員")
+    assert clicked == ["CV_中文.pdf"]
+
+    plan_en = [("一般英文版", "English")]
+    _, clicked = await _pick_with(["CV_English.pdf", "CV_中文.pdf"], plan_en,
+                                  language="en", title="Clerk")
+    assert clicked == ["CV_English.pdf"]
+
+
+async def test_pick_cv_keyword_match_is_case_insensitive():
+    plan = [("AI 版", "ai")]
+    _, clicked = await _pick_with(["Lai_AI_CV.pdf"], plan)
+    assert clicked == ["Lai_AI_CV.pdf"]
+
+
+async def test_pick_cv_without_plan_keeps_old_behaviour():
+    """冇填關鍵字 -> 舊行為：按 JD 語言 + 內建版本標記。"""
+    page = FakePage()
+    page.add("button:has-text('發履歷')", FakeElem(text="發履歷"))
+    en = FakeElem(text="lai_shu_lap_fullstack.pdf")
+    zh = FakeElem(text="lai_shulap_cv_zh.pdf")
+    page.add("[role='dialog'] p.MuiTypography-noWrap", en)
+    page.add("[role='dialog'] p.MuiTypography-noWrap", zh)
+
+    picked = await _offertoday_pick_cv(page, "zh", plan=None)
+    assert picked == "lai_shulap_cv_zh.pdf"
+    assert zh.clicked and not en.clicked

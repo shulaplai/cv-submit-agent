@@ -84,7 +84,7 @@ export const api = {
     fd.append("lang", lang);
     return req<{ lang: string; text: string }>("/api/profile/generate-intro", { method: "POST", body: fd });
   },
-  generateAfterCvIntro: (lang: "zh" | "en", topic: "it" | "general") => {
+  generateAfterCvIntro: (lang: "zh" | "en", topic: "ai" | "it" | "general") => {
     const fd = new FormData();
     fd.append("lang", lang);
     fd.append("topic", topic);

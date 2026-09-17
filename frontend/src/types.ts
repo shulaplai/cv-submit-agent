@@ -65,6 +65,7 @@ export interface ScanStatus {
     new_jobs: number;
     skipped_duplicates: number;
     skipped_old: number;
+    skipped_location?: number;
     capped: number;
     enriched: number;
     backfilled: number;
@@ -74,7 +75,10 @@ export interface ScanStatus {
     errors: string[];
     track: string;
     channels?: string[];
-    tracks: Record<string, { scanned: number; new_jobs: number; skipped_old: number; capped: number }>;
+    tracks: Record<string, {
+      scanned: number; new_jobs: number; skipped_old: number;
+      skipped_location?: number; capped: number;
+    }>;
   } | null;
   last_backfill: { at: string; processed: number } | null;
   last_jd_backfill?: { at: string; processed: number; left: number } | null;
@@ -122,11 +126,19 @@ export interface Profile {
   after_cv_intro_it_en: string;
   after_cv_intro_general_zh: string;
   after_cv_intro_general_en: string;
+  after_cv_intro_ai_zh: string;
+  after_cv_intro_ai_en: string;
+  cv_ai_title_keywords: string;
   it_keywords: string;
   it_track_enabled: boolean;
   general_track_enabled: boolean;
   general_job_keywords: string;
   non_it_keywords: string;
+  general_wanted_locations: string;
+  offertoday_cv_ai_keyword: string;
+  offertoday_cv_it_keyword: string;
+  offertoday_cv_general_zh_keyword: string;
+  offertoday_cv_general_en_keyword: string;
   offertoday_general_search_terms: string;
   offertoday_it_search_terms: string;
   govhk_it_max_jobs: number;

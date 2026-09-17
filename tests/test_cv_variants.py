@@ -298,3 +298,44 @@ def test_profile_roundtrip_keeps_variant_paths(client):
     assert r.status_code == 200
     assert r.json()["cv_developer_zh_path"] == "/tmp/dev_zh.pdf"
     assert client.get("/api/profile").json()["cv_developer_zh_path"] == "/tmp/dev_zh.pdf"
+
+
+# ------------------------------ AI 字眼可由設定頁改（profile 覆寫 .env）
+
+def test_ai_keywords_editable_from_settings(db, monkeypatch):
+    """用戶要求：判斷「AI 職位」嘅字眼要喺設定頁改得到。"""
+    from app.config import settings
+    from app.models import Profile
+    from app.services.cv_loader import ai_title_keywords, title_is_ai
+
+    monkeypatch.setattr(settings, "CV_AI_TITLE_KEYWORDS", "ai, llm")
+    assert ai_title_keywords() == ["ai", "llm"]
+    assert title_is_ai("智能製造工程師") is False
+
+    db.add(Profile(cv_ai_title_keywords="智能, mlops"))
+    db.commit()
+    assert ai_title_keywords() == ["智能", "mlops"]
+    assert title_is_ai("智能製造工程師") is True
+    assert title_is_ai("AI Engineer") is False        # profile 覆寫咗，唔再有 ai
+
+
+def test_ai_keywords_empty_falls_back_to_env(db, monkeypatch):
+    from app.config import settings
+    from app.models import Profile
+    from app.services.cv_loader import ai_title_keywords
+
+    monkeypatch.setattr(settings, "CV_AI_TITLE_KEYWORDS", "ai, llm, 人工智能")
+    db.add(Profile(cv_ai_title_keywords=""))
+    db.commit()
+    assert ai_title_keywords() == ["ai", "llm", "人工智能"]
+
+
+def test_ai_job_cv_ladder_still_ai_then_fullstack(db, monkeypatch):
+    """OfferToday：AI 職位先揀 AI 版 CV，冇 AI 版就揀 Full-stack 版。"""
+    from app.models import Profile
+    from app.services.cv_loader import offertoday_variant_preference
+
+    db.add(Profile())
+    db.commit()
+    assert offertoday_variant_preference("AI Engineer") == ["ai", "fullstack", "developer"]
+    assert offertoday_variant_preference("Backend Developer") == ["fullstack", "developer"]

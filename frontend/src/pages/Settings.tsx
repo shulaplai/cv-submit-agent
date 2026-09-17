@@ -124,17 +124,23 @@ export function Settings({ pushToast }: { pushToast: (text: string, kind?: "info
         auto_submit: p.auto_submit,
         intro_en: p.intro_en,
         intro_zh: p.intro_zh,
-        offertoday_cv_en_keyword: p.offertoday_cv_en_keyword,
-        offertoday_cv_zh_keyword: p.offertoday_cv_zh_keyword,
+        offertoday_cv_ai_keyword: p.offertoday_cv_ai_keyword,
+        offertoday_cv_it_keyword: p.offertoday_cv_it_keyword,
+        offertoday_cv_general_zh_keyword: p.offertoday_cv_general_zh_keyword,
+        offertoday_cv_general_en_keyword: p.offertoday_cv_general_en_keyword,
         after_cv_intro_it_zh: p.after_cv_intro_it_zh,
         after_cv_intro_it_en: p.after_cv_intro_it_en,
         after_cv_intro_general_zh: p.after_cv_intro_general_zh,
         after_cv_intro_general_en: p.after_cv_intro_general_en,
+        after_cv_intro_ai_zh: p.after_cv_intro_ai_zh,
+        after_cv_intro_ai_en: p.after_cv_intro_ai_en,
+        cv_ai_title_keywords: p.cv_ai_title_keywords,
         it_keywords: p.it_keywords,
         it_track_enabled: p.it_track_enabled,
         general_track_enabled: p.general_track_enabled,
         general_job_keywords: p.general_job_keywords,
         non_it_keywords: p.non_it_keywords,
+        general_wanted_locations: p.general_wanted_locations,
         offertoday_general_search_terms: p.offertoday_general_search_terms,
         offertoday_it_search_terms: p.offertoday_it_search_terms,
         govhk_it_max_jobs: p.govhk_it_max_jobs,
@@ -198,13 +204,14 @@ export function Settings({ pushToast }: { pushToast: (text: string, kind?: "info
     }
   };
 
-  const genAfterCvIntro = async (lang: "zh" | "en", topic: "it" | "general") => {
+  const genAfterCvIntro = async (lang: "zh" | "en", topic: "ai" | "it" | "general") => {
     setBusy(true);
     try {
       const r = await api.generateAfterCvIntro(lang, topic);
       const key = `after_cv_intro_${topic}_${lang}` as keyof Profile;
       set(key, r.text);
-      pushToast(`已生成 ${topic === "it" ? "IT版" : "一般版"} ${lang === "zh" ? "中文" : "English"} 自我介紹。`, "ok");
+      const label = topic === "ai" ? "AI Agent 版" : topic === "it" ? "IT版" : "一般版";
+      pushToast(`已生成 ${label} ${lang === "zh" ? "中文" : "English"} 自我介紹。`, "ok");
     } catch (e) {
       pushToast(`生成失敗: ${(e as Error).message}`, "err");
     } finally {
@@ -301,28 +308,94 @@ export function Settings({ pushToast }: { pushToast: (text: string, kind?: "info
           </div>
         </div>
         <div className="section">
-          <h4>OfferToday：已上傳 CV 檔名關鍵字（用嚟分英文／中文 CV）</h4>
+          <h4>OfferToday：已上傳 CV 檔名關鍵字（4 類）</h4>
+          <div className="note-inline" style={{ borderStyle: "solid" }}>
+            自動投遞會喺 OfferToday 嘅「揀履歷」對話框，按已上載 CV 嘅<b>檔名</b>揀啱嘅版本。
+            填你檔名入面獨有嘅字（不分大小寫，中英文都搜）。
+            <br />
+            次序：<b>AI 職位</b>（職位標題有 AI 字眼）→ A.I. 關鍵字 → I.T. 關鍵字 → 一般（跟 JD 語言）；
+            <b>其他 IT 工</b> → I.T. 關鍵字 → 一般；<b>其他工</b> → 一般（跟 JD 語言）。
+            留空就跳過嗰一級，全部冇填就沿用內建嘅自動判斷。
+          </div>
           <div className="field">
-            <label>英文 CV 檔名關鍵字（英文 JD 嘅工用）</label>
+            <label>A.I. 關鍵字（AI 版 CV 檔名，中英文通用）</label>
             <input
-              value={p.offertoday_cv_en_keyword}
-              onChange={(e) => set("offertoday_cv_en_keyword", e.target.value)}
-              placeholder="例如：fullstack（留空 = 自動判斷：唔含 zh/chinese 就當英文）"
+              value={p.offertoday_cv_ai_keyword}
+              onChange={(e) => set("offertoday_cv_ai_keyword", e.target.value)}
+              placeholder="例如：AI（檔名 例如 LaiShuLap_AI.pdf）"
             />
           </div>
           <div className="field">
-            <label>中文 CV 檔名關鍵字（中文 JD 嘅工用）</label>
+            <label>I.T. 關鍵字（IT 版 CV 檔名，中英文通用；只一份 IT 版）</label>
             <input
-              value={p.offertoday_cv_zh_keyword}
-              onChange={(e) => set("offertoday_cv_zh_keyword", e.target.value)}
-              placeholder="例如：zh（留空 = 自動判斷：含 zh/chinese/中文 就當中文）"
+              value={p.offertoday_cv_it_keyword}
+              onChange={(e) => set("offertoday_cv_it_keyword", e.target.value)}
+              placeholder="例如：IT（檔名 例如 LaiShuLap_IT.pdf）"
+            />
+          </div>
+          <div className="field">
+            <label>一般中文關鍵字（中文 JD 嘅一般工用）</label>
+            <input
+              value={p.offertoday_cv_general_zh_keyword}
+              onChange={(e) => set("offertoday_cv_general_zh_keyword", e.target.value)}
+              placeholder="例如：中文 或 zh（留空 = 自動判斷：含 zh/chinese/中文 就當中文）"
+            />
+          </div>
+          <div className="field">
+            <label>一般英文關鍵字（英文 JD 嘅一般工用）</label>
+            <input
+              value={p.offertoday_cv_general_en_keyword}
+              onChange={(e) => set("offertoday_cv_general_en_keyword", e.target.value)}
+              placeholder="例如：English 或 en（留空 = 自動判斷：唔含中文標記就當英文）"
             />
           </div>
         </div>
         <div className="section">
           <h4>發送 CV 後嘅自我介紹（OfferToday 自動投遞用，約 100 字）</h4>
           <div className="note-inline" style={{ borderStyle: "solid" }}>
-            自動投遞會先發 CV，再自動打一段自我介紹送出。IT／程式相關工用「IT 版」，其他工用「一般版」；語言跟 JD（英文 JD 用英文，中文 JD 用中文）。留空會由 AI 即場生成，或撳下邊「AI 生成」預先生成好。
+            自動投遞會先發 CV，再自動打一段自我介紹送出。次序同 CV 版本一致：
+            <b>職位標題有 AI 字眼 → AI Agent 版</b>；AI 版留空會退回 IT 版；
+            其他 IT／程式工用「IT 版」；其餘用「一般版」。語言跟 JD（英文 JD 用英文，中文 JD 用中文）。
+            留空會由 AI 即場生成，或撳下邊「AI 生成」預先生成好。
+          </div>
+          <div className="field">
+            <label>AI 職位判斷字眼（逗號分隔，只睇職位標題；留空 = .env 預設）</label>
+            <input
+              value={p.cv_ai_title_keywords}
+              onChange={(e) => set("cv_ai_title_keywords", e.target.value)}
+              placeholder="ai, artificial intelligence, 人工智能, llm, 大模型, machine learning, 生成式, genai, ai agent"
+            />
+            <div className="note-inline">
+              標題命中呢啲字眼就會用「AI 版 CV」＋「AI Agent 版自我介紹」；搵唔到 AI 版就自動用 Full-stack 版。
+            </div>
+          </div>
+          <div className="field">
+            <label>AI Agent 版（中文）</label>
+            <textarea
+              rows={3}
+              value={p.after_cv_intro_ai_zh}
+              onChange={(e) => set("after_cv_intro_ai_zh", e.target.value)}
+              placeholder="你好，我係一位專注 AI Agent 同大型語言模型應用開發嘅工程師…"
+            />
+            <div className="btnrow" style={{ marginTop: 8 }}>
+              <button className="btn" onClick={() => genAfterCvIntro("zh", "ai")} disabled={busy}>
+                ✦ AI 生成 AI Agent 版（中文）
+              </button>
+            </div>
+          </div>
+          <div className="field">
+            <label>AI Agent 版（English）</label>
+            <textarea
+              rows={3}
+              value={p.after_cv_intro_ai_en}
+              onChange={(e) => set("after_cv_intro_ai_en", e.target.value)}
+              placeholder="Hi, I'm an engineer focused on AI agents and LLM applications…"
+            />
+            <div className="btnrow" style={{ marginTop: 8 }}>
+              <button className="btn" onClick={() => genAfterCvIntro("en", "ai")} disabled={busy}>
+                ✦ AI 生成 AI Agent 版（English）
+              </button>
+            </div>
           </div>
           <div className="field">
             <label>IT／程式版（中文）</label>
@@ -439,6 +512,21 @@ export function Settings({ pushToast }: { pushToast: (text: string, kind?: "info
             <div className="note-inline">
               職位標題有呢啲字就唔會入 IT 軌（擋住 engineer／工程師／技術員 等過闊字造成嘅誤分類）；
               但如果同時有「肯定係 IT」字眼（AI、developer、軟件、系統、資訊…）就照當 IT。
+            </div>
+          </div>
+          <div className="field">
+            <label>一般工：想去嘅地點（逗號分隔；留空 = 唔篩地點）</label>
+            <input
+              value={p.general_wanted_locations}
+              onChange={(e) => set("general_wanted_locations", e.target.value)}
+              placeholder="觀塘, 旺角, 尖沙咀, 中環, 九龍灣, 新蒲崗, 荔枝角, 柴灣, 荃灣, 黃竹坑, 鰂魚涌"
+            />
+            <div className="note-inline">
+              只收工地點喺呢個名單嘅<b>一般</b>工：工地點、標題或者 JD 內文任何一處
+              寫住名單內嘅地區就收；寫唔明（例如只寫「港九新界」）或者冇寫地點就唔收，
+              所以機場／赤鱲角等唔想去嘅地方自然唔會出現。
+              <br />
+              IT 工同<b>大灣區計劃</b>（深圳／廣州等）完全唔受影響；舊記錄同已申請嘅工一律唔會動。
             </div>
           </div>
           <div className="field">

@@ -51,6 +51,14 @@ _COLUMN_MIGRATIONS = [
     ("profiles", "general_track_enabled", "BOOLEAN NOT NULL DEFAULT 1"),
     ("profiles", "general_job_keywords", "TEXT NOT NULL DEFAULT ''"),
     ("profiles", "non_it_keywords", "TEXT NOT NULL DEFAULT ''"),
+    ("profiles", "general_wanted_locations", "TEXT NOT NULL DEFAULT ''"),
+    ("profiles", "after_cv_intro_ai_zh", "TEXT NOT NULL DEFAULT ''"),
+    ("profiles", "after_cv_intro_ai_en", "TEXT NOT NULL DEFAULT ''"),
+    ("profiles", "cv_ai_title_keywords", "TEXT NOT NULL DEFAULT ''"),
+    ("profiles", "offertoday_cv_ai_keyword", "TEXT NOT NULL DEFAULT ''"),
+    ("profiles", "offertoday_cv_it_keyword", "TEXT NOT NULL DEFAULT ''"),
+    ("profiles", "offertoday_cv_general_zh_keyword", "TEXT NOT NULL DEFAULT ''"),
+    ("profiles", "offertoday_cv_general_en_keyword", "TEXT NOT NULL DEFAULT ''"),
     ("profiles", "offertoday_general_search_terms", "TEXT NOT NULL DEFAULT ''"),
     ("profiles", "offertoday_it_search_terms", "TEXT NOT NULL DEFAULT ''"),
     ("profiles", "govhk_it_max_jobs", "INTEGER NOT NULL DEFAULT 0"),
@@ -91,6 +99,14 @@ def migrate() -> None:
             with engine.begin() as conn:
                 conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
             log.info("migrated: %s.%s added", table, column)
+    # 舊欄位：一度加過「排除工地點」黑名單，已改成「想去嘅地點」白名單。
+    try:
+        if "general_exclude_locations" in _table_columns("profiles"):
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE profiles DROP COLUMN general_exclude_locations"))
+            log.info("migrated: profiles.general_exclude_locations dropped")
+    except Exception:  # noqa: BLE001 — 舊 SQLite 唔支援 DROP COLUMN 就由佢
+        log.warning("could not drop profiles.general_exclude_locations", exc_info=True)
     with engine.begin() as conn:
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_job_applications_dup_key "
                           "ON job_applications (dup_key)"))

@@ -52,6 +52,11 @@ class Profile(Base):
     after_cv_intro_it_en: Mapped[str] = mapped_column(Text, default="")
     after_cv_intro_general_zh: Mapped[str] = mapped_column(Text, default="")
     after_cv_intro_general_en: Mapped[str] = mapped_column(Text, default="")
+    # OfferToday: 「AI Agent 版」自我介紹（職位標題有 AI 字眼時用；空 = 退回 IT 版）
+    after_cv_intro_ai_zh: Mapped[str] = mapped_column(Text, default="")
+    after_cv_intro_ai_en: Mapped[str] = mapped_column(Text, default="")
+    # 判斷「AI 職位」嘅標題字眼（逗號分隔；空 = .env CV_AI_TITLE_KEYWORDS）
+    cv_ai_title_keywords: Mapped[str] = mapped_column(Text, default="")
     # Comma-separated keywords to classify a job as IT/programming (empty = built-in defaults)
     it_keywords: Mapped[str] = mapped_column(Text, default="")
     # ---- Job-track settings (IT vs 一般), editable in the Settings page ----
@@ -59,8 +64,16 @@ class Profile(Base):
     general_track_enabled: Mapped[bool] = mapped_column(default=True)
     # 「唔當 IT」嘅職位字眼（擋住 engineer／工程師／技術員 等過闊字；空 = 內建）
     non_it_keywords: Mapped[str] = mapped_column(Text, default="")
+    # 一般工「想去嘅地點」白名單（逗號分隔，空 = 唔篩地點）
+    general_wanted_locations: Mapped[str] = mapped_column(Text, default="")
     # Non-IT track keywords (empty = .env GENERAL_JOB_KEYWORDS or built-ins)
     general_job_keywords: Mapped[str] = mapped_column(Text, default="")
+    # OfferToday「揀履歷」對話框：4 類 CV 嘅檔名關鍵字
+    # （AI 版／IT 版唔分中英；一般版分中英）
+    offertoday_cv_ai_keyword: Mapped[str] = mapped_column(Text, default="")
+    offertoday_cv_it_keyword: Mapped[str] = mapped_column(Text, default="")
+    offertoday_cv_general_zh_keyword: Mapped[str] = mapped_column(Text, default="")
+    offertoday_cv_general_en_keyword: Mapped[str] = mapped_column(Text, default="")
     # OfferToday general track: comma-separated search terms (empty = general keywords)
     offertoday_general_search_terms: Mapped[str] = mapped_column(Text, default="")
     # OfferToday IT track: extra keyword searches on top of the 3 category pages

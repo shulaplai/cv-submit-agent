@@ -107,6 +107,9 @@ class Settings(BaseSettings):
     # 唔當 IT 嘅職位字眼（逗號分隔；留空 = 內建）。擋住 engineer／工程師／技術員
     # 呢啲好闊嘅字造成嘅誤分類（例：MECHANICAL ENGINEER）。
     NON_IT_KEYWORDS: str = ""
+    # 一般工「想去嘅地點」白名單（逗號分隔；空 = 唔篩地點）。
+    # 唔喺名單／地點唔明確嘅一般工一律唔收（IT 工同大灣區計劃唔受影響）。
+    GENERAL_WANTED_LOCATIONS: str = ""
     # gov.hk 一般 track: the main quickview (ALL vacancy categories, newest
     # first) filtered by the general keywords; at most N jobs per scan.
     GOVHK_GENERAL_MAX_JOBS: int = 20
@@ -131,6 +134,11 @@ class Settings(BaseSettings):
     # (zh/chinese/中文 -> Chinese; anything else -> English).
     OFFERTODAY_CV_EN_KEYWORD: str = ""
     OFFERTODAY_CV_ZH_KEYWORD: str = ""
+    # 揀履歷用嘅 4 類檔名關鍵字（AI／IT 唔分中英；一般版分中英）
+    OFFERTODAY_CV_AI_KEYWORD: str = ""
+    OFFERTODAY_CV_IT_KEYWORD: str = ""
+    OFFERTODAY_CV_GENERAL_ZH_KEYWORD: str = ""
+    OFFERTODAY_CV_GENERAL_EN_KEYWORD: str = ""
 
     # --- Browser automation ---
     # JobsDB/OfferToday automation connects to a real Chrome window via CDP.

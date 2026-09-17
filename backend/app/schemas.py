@@ -106,11 +106,19 @@ class ProfileIn(BaseModel):
     after_cv_intro_it_en: Optional[str] = None
     after_cv_intro_general_zh: Optional[str] = None
     after_cv_intro_general_en: Optional[str] = None
+    after_cv_intro_ai_zh: Optional[str] = None
+    after_cv_intro_ai_en: Optional[str] = None
+    cv_ai_title_keywords: Optional[str] = None
     it_keywords: Optional[str] = None
     it_track_enabled: Optional[bool] = None
     general_track_enabled: Optional[bool] = None
     general_job_keywords: Optional[str] = None
     non_it_keywords: Optional[str] = None
+    general_wanted_locations: Optional[str] = None
+    offertoday_cv_ai_keyword: Optional[str] = None
+    offertoday_cv_it_keyword: Optional[str] = None
+    offertoday_cv_general_zh_keyword: Optional[str] = None
+    offertoday_cv_general_en_keyword: Optional[str] = None
     offertoday_general_search_terms: Optional[str] = None
     offertoday_it_search_terms: Optional[str] = None
     govhk_it_max_jobs: Optional[int] = None
@@ -146,11 +154,19 @@ class ProfileOut(BaseModel):
     after_cv_intro_it_en: str
     after_cv_intro_general_zh: str
     after_cv_intro_general_en: str
+    after_cv_intro_ai_zh: str
+    after_cv_intro_ai_en: str
+    cv_ai_title_keywords: str
     it_keywords: str
     it_track_enabled: bool
     general_track_enabled: bool
     general_job_keywords: str
     non_it_keywords: str
+    general_wanted_locations: str
+    offertoday_cv_ai_keyword: str
+    offertoday_cv_it_keyword: str
+    offertoday_cv_general_zh_keyword: str
+    offertoday_cv_general_en_keyword: str
     offertoday_general_search_terms: str
     offertoday_it_search_terms: str
     govhk_it_max_jobs: int

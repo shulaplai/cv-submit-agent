@@ -55,6 +55,7 @@ async def _scan_job(track: str | None = None, channels: list[str] | None = None)
             "new_jobs": summary.new_jobs,
             "skipped_duplicates": summary.skipped_duplicates,
             "skipped_old": summary.skipped_old,
+            "skipped_location": summary.skipped_location,
             "capped": summary.capped,
             "enriched": summary.enriched,
             "backfilled": summary.backfilled,

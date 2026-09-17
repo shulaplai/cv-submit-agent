@@ -47,6 +47,13 @@ DEFAULT_INTRO_IT_EN = ("Hi, I'm a software engineer focused on IT and programmin
                        "in full-stack development and AI applications using Python, TypeScript, React "
                        "and LLM technologies. I'm very interested in this role and would love to "
                        "discuss further. Thank you!")
+DEFAULT_INTRO_AI_ZH = ("你好，我係一位專注 AI Agent 同大型語言模型應用開發嘅工程師，"
+                       "做過 AI agent、RAG 檢索同自動化流程嘅實作，熟悉 Python、TypeScript 同 LLM API 整合。"
+                       "對貴公司呢個 AI 相關職位好有興趣，希望有機會詳談，謝謝！")
+DEFAULT_INTRO_AI_EN = ("Hi, I'm an engineer focused on AI agents and LLM applications, with hands-on "
+                       "experience building AI agents, RAG pipelines and automation workflows using "
+                       "Python, TypeScript and LLM APIs. I'm very interested in this AI role and would "
+                       "love to discuss further. Thank you!")
 DEFAULT_INTRO_GENERAL_ZH = ("你好，我係一位工作認真、學習能力強嘅求職者，具備良好嘅溝通同團隊合作能力，"
                             "對貴公司嘅發展同文化好有興趣，希望有機會加入並一齊成長。請查收履歷，謝謝！")
 DEFAULT_INTRO_GENERAL_EN = ("Hi, I'm a diligent and quick-learning candidate with strong communication "
@@ -441,17 +448,24 @@ def _offertoday_settings() -> dict:
         return v or default
 
     return {
-        "cv_en_kw": gv("offertoday_cv_en_keyword", settings.OFFERTODAY_CV_EN_KEYWORD),
-        "cv_zh_kw": gv("offertoday_cv_zh_keyword", settings.OFFERTODAY_CV_ZH_KEYWORD),
+        # 4 類 CV 檔名關鍵字（用戶要求）：AI 版／IT 版唔分中英，一般版分中英
+        "cv_ai_kw": gv("offertoday_cv_ai_keyword", settings.OFFERTODAY_CV_AI_KEYWORD),
+        "cv_it_kw": gv("offertoday_cv_it_keyword", settings.OFFERTODAY_CV_IT_KEYWORD),
+        "cv_zh_kw": (gv("offertoday_cv_general_zh_keyword")
+                     or gv("offertoday_cv_zh_keyword", settings.OFFERTODAY_CV_ZH_KEYWORD)),
+        "cv_en_kw": (gv("offertoday_cv_general_en_keyword")
+                     or gv("offertoday_cv_en_keyword", settings.OFFERTODAY_CV_EN_KEYWORD)),
         "intro_it_zh": gv("after_cv_intro_it_zh"),
         "intro_it_en": gv("after_cv_intro_it_en"),
         "intro_general_zh": gv("after_cv_intro_general_zh"),
         "intro_general_en": gv("after_cv_intro_general_en"),
+        "intro_ai_zh": gv("after_cv_intro_ai_zh"),
+        "intro_ai_en": gv("after_cv_intro_ai_en"),
     }
 
 
-async def generate_after_cv_intro(lang: str, is_it: bool) -> str:
-    """AI-write the ~100-char post-CV self-intro (IT vs general, en vs zh).
+async def generate_after_cv_intro(lang: str, topic: str = "general") -> str:
+    """AI-write the ~100-char post-CV self-intro (ai / it / general, en vs zh).
 
     Used by the settings endpoint and by the OfferToday apply flow. Raises
     LLMError when generation fails (callers fall back to a default template).
@@ -464,7 +478,9 @@ async def generate_after_cv_intro(lang: str, is_it: bool) -> str:
     except Exception:  # noqa: BLE001 — no CV configured, still generate generic
         cv_text = ""
     skills = load_skills()
-    topic = "IT / 程式開發" if is_it else "一般專業"
+    angle = {"ai": "AI Agent / 大型語言模型應用開發",
+             "it": "IT / 程式開發",
+             "general": "一般專業"}.get(topic, "一般專業")
 
     if lang == "zh":
         system = (
@@ -472,7 +488,7 @@ async def generate_after_cv_intro(lang: str, is_it: bool) -> str:
             "用喺求職平台發完 CV 之後跟住送出。語氣專業自信、唔吹噓，只可以用履歷事實。"
             "直接輸出自我介紹文字，唔加稱呼/標題/問候。"
         )
-        user = f"自我介紹方向：{topic}\n技能：{', '.join(skills) if skills else '（未設定）'}\n\n履歷：\n{cv_text[:4000]}"
+        user = f"自我介紹方向：{angle}\n技能：{', '.join(skills) if skills else '（未設定）'}\n\n履歷：\n{cv_text[:4000]}"
     else:
         system = (
             "You are the applicant's assistant. Write an 80–120 word English "
@@ -480,7 +496,7 @@ async def generate_after_cv_intro(lang: str, is_it: bool) -> str:
             "Professional and confident, based ONLY on CV facts, no exaggeration. "
             "Output only the intro text — no greeting, title, or sign-off."
         )
-        user = f"Intro angle: {topic}\nSkills: {', '.join(skills) if skills else '(not set)'}\n\nCV:\n{cv_text[:4000]}"
+        user = f"Intro angle: {angle}\nSkills: {', '.join(skills) if skills else '(not set)'}\n\nCV:\n{cv_text[:4000]}"
 
     text = await llm_svc.chat(
         [{"role": "system", "content": system}, {"role": "user", "content": user}],
@@ -489,21 +505,67 @@ async def generate_after_cv_intro(lang: str, is_it: bool) -> str:
     return text.strip()
 
 
+def intro_topic(row: JobApplication) -> str:
+    """自我介紹版本：AI 職位（標題有 AI 字眼）-> "ai"，其他 IT -> "it"，否則 "general"."""
+    from .cv_loader import title_is_ai
+
+    if title_is_ai(getattr(row, "title", "") or ""):
+        return "ai"
+    return "it" if _is_it_job(row) else "general"
+
+
+def offertoday_cv_keyword_plan(row: JobApplication, cfg: dict) -> list[tuple[str, str]]:
+    """「揀履歷」要有次序咁試嘅（版本標籤, 檔名關鍵字）。
+
+    用戶要求嘅 4 類：AI 版／IT 版唔分中英文，一般版分中英。
+    - AI 職位（標題有 AI 字眼）-> AI 關鍵字 -> IT 關鍵字 -> 一般（跟 JD 語言）
+    - 其他 IT 工                -> IT 關鍵字 -> 一般（跟 JD 語言）
+    - 其他工                    -> 一般（跟 JD 語言）
+    關鍵字留空就跳過嗰一級。
+    """
+    from .cv_loader import title_is_ai
+
+    is_ai = title_is_ai(getattr(row, "title", "") or "")
+    is_it = is_ai or _is_it_job(row)
+    lang = "zh" if (getattr(row, "jd_language", "") or "") == "zh" else "en"
+    plan: list[tuple[str, str]] = []
+    if is_ai and (cfg.get("cv_ai_kw") or "").strip():
+        plan.append(("AI 版", cfg["cv_ai_kw"].strip()))
+    if is_it and (cfg.get("cv_it_kw") or "").strip():
+        plan.append(("IT 版", cfg["cv_it_kw"].strip()))
+    general_kw = (cfg.get(f"cv_{lang}_kw") or "").strip()
+    if general_kw:
+        plan.append((f"一般{'中文' if lang == 'zh' else '英文'}版", general_kw))
+    return plan
+
+
 async def _offertoday_intro(row: JobApplication, cfg: dict) -> str:
-    """Pick the post-CV self-intro: saved value > AI-generated > default template."""
-    is_it = _is_it_job(row)
-    if row.jd_language == "en":
-        saved = cfg["intro_it_en"] if is_it else cfg["intro_general_en"]
-        default = DEFAULT_INTRO_IT_EN if is_it else DEFAULT_INTRO_GENERAL_EN
+    """Pick the post-CV self-intro.
+
+    階梯（同 CV 版本一致）：AI 職位 -> AI Agent 版自我介紹 -> 冇填就退回 IT 版 ->
+    再冇就 AI 生成 / 預設模板。非 AI 嘅 IT 工 -> IT 版；其他 -> 一般版。
+    """
+    lang = "en" if row.jd_language == "en" else "zh"
+    topic = intro_topic(row)
+    if topic == "ai":
+        topics = ["ai", "it", "general"]      # AI 版留空就退回 IT 版
+    elif topic == "it":
+        topics = ["it", "general"]
     else:
-        saved = cfg["intro_it_zh"] if is_it else cfg["intro_general_zh"]
-        default = DEFAULT_INTRO_IT_ZH if is_it else DEFAULT_INTRO_GENERAL_ZH
-    if saved:
-        return saved
+        topics = ["general"]
+    defaults = {
+        "ai": (DEFAULT_INTRO_AI_EN if lang == "en" else DEFAULT_INTRO_AI_ZH),
+        "it": (DEFAULT_INTRO_IT_EN if lang == "en" else DEFAULT_INTRO_IT_ZH),
+        "general": (DEFAULT_INTRO_GENERAL_EN if lang == "en" else DEFAULT_INTRO_GENERAL_ZH),
+    }
+    for t in topics:
+        saved = (cfg.get(f"intro_{t}_{lang}") or "").strip()
+        if saved:
+            return saved
     try:
-        return await generate_after_cv_intro(row.jd_language, is_it)
+        return await generate_after_cv_intro(lang, topic)
     except Exception:  # noqa: BLE001 — LLM missing/failed -> use template
-        return default
+        return defaults[topics[0]]
 
 
 async def _offertoday_send_message(page, text: str) -> bool:
@@ -563,7 +625,8 @@ async def _offertoday(row: JobApplication, cl_text: str, auto: bool) -> dict:
 
     # 1. 發履歷 -> 「選擇履歷」dialog -> pick CV by JD language
     picked = await _offertoday_pick_cv(page, row.jd_language, cfg["cv_zh_kw"], cfg["cv_en_kw"],
-                                        title=row.title)
+                                        title=row.title,
+                                        plan=offertoday_cv_keyword_plan(row, cfg))
     if not picked:
         return {"ok": True, "kind": "form", "submitted": False, "url": page.url,
                 "message": "⚠ 未揾到/揀到已上傳嘅 CV，請喺視窗手動撳「發履歷」揀。"}
@@ -610,14 +673,13 @@ def _offertoday_cv_matches(filename: str, language: str, zh_kw: str = "", en_kw:
 
 
 async def _offertoday_pick_cv(page, language: str, zh_kw: str = "", en_kw: str = "",
-                               title: str = "") -> str:
+                               title: str = "", plan: list[tuple[str, str]] | None = None) -> str:
     """Click 「發履歷」 to open the 「選擇履歷」 dialog and pick a CV.
 
-    Two-step choice:
-      1. keep the resumes whose filename matches the JD language;
-      2. among those, prefer the CV VERSION the job asks for
-         (AI 職位 → AI 版 → Full-stack 版 → Developer 版; 其他 → Full-stack → Developer),
-         matching by filename keywords. No match → first language match (old behaviour).
+    ``plan``（用戶設定嘅 4 類檔名關鍵字）為先，依次試：
+      AI 職位 -> AI 版 -> IT 版 -> 一般版（跟 JD 語言）；其他 IT 工 -> IT 版 -> 一般版；
+      其他工 -> 一般版。關鍵字係不分大小寫嘅檔名子字串。
+    全部都唔中就用舊行為（語言篩選 + 內建版本標記）做 fallback。
     Returns the picked filename ('' = failed).
     """
     fb = page.locator("button:has-text('發履歷')").first
@@ -646,19 +708,33 @@ async def _offertoday_pick_cv(page, language: str, zh_kw: str = "", en_kw: str =
     if not candidates:
         return ""
 
-    # 1. language filter (same as before)
-    lang_ok = [c for c in candidates if _offertoday_cv_matches(c[0], language, zh_kw, en_kw)]
-    pool = lang_ok or candidates
-
-    # 2. version filter: AI 職位優先揀 AI 版履歷，跟住 Full-stack，最後 Developer
     from .cv_loader import offertoday_variant_preference, filename_matches_variant
 
-    chosen = pool[0]
-    for variant in offertoday_variant_preference(title):
-        hit = next((c for c in pool if filename_matches_variant(c[0], variant)), None)
+    # 1. 用戶設定嘅 4 類檔名關鍵字（AI／IT 版唔分中英）。
+    #    用詞邊界比對（match_keyword）而唔係純子字串 —— 否則關鍵字 "AI" 會撞到
+    #    用戶名 "Lai"（lai_shulap.pdf 含 "ai"）而亂揀履歷。
+    from .classify import match_keyword
+
+    chosen = None
+    chosen_label = ""
+    for label, kw in (plan or []):
+        hit = next((c for c in candidates if match_keyword(kw, c[0])), None)
         if hit:
-            chosen = hit
+            chosen, chosen_label = hit, label
             break
+
+    # 2. fallback：舊行為（先按 JD 語言篩，再按內建版本標記 AI→Full-stack→Developer）
+    if chosen is None:
+        lang_ok = [c for c in candidates if _offertoday_cv_matches(c[0], language, zh_kw, en_kw)]
+        pool = lang_ok or candidates
+        chosen = pool[0]
+        for variant in offertoday_variant_preference(title):
+            hit = next((c for c in pool if filename_matches_variant(c[0], variant)), None)
+            if hit:
+                chosen = hit
+                break
+    if chosen_label:
+        log.info("offertoday pick cv: %s（%s）", chosen[0], chosen_label)
     try:
         await items.nth(chosen[1]).click(timeout=5000)
         return chosen[0]

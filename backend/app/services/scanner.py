@@ -20,7 +20,8 @@ from ..config import settings
 from ..models import CoverLetter, JobApplication, Profile
 from . import scraper_govhk, scraper_jobsdb, scraper_offertoday
 from .classify import (TrackConfig, parse_keywords, resolve_general_keywords,
-                       resolve_it_keywords, resolve_non_it_keywords)
+                       resolve_it_keywords, resolve_non_it_keywords,
+                       resolve_wanted_locations, wanted_location_match)
 from .cl_generator import generate_cl_checked
 from .cv_loader import get_cv_text, load_skills
 from .language import detect_language
@@ -129,6 +130,9 @@ def load_track_configs(db: Session, only: str | None = None) -> list[TrackConfig
     cfg_general = TrackConfig(
         name="general", label="一般",
         keywords=general_kws, it_keywords=it_kws, non_it_keywords=non_it_kws,
+        # 用戶要求：一般工只收「想去嘅地點」（UI 可改；空 = 唔篩）
+        wanted_locations=resolve_wanted_locations(
+            profile.general_wanted_locations if profile else ""),
         govhk_max_jobs=(profile.govhk_general_max_jobs if profile else 0)
         or settings.GOVHK_GENERAL_MAX_JOBS,
         offertoday_max_per_search=(profile.offertoday_general_max_per_search if profile else 0)
@@ -160,6 +164,7 @@ class ScanSummary:
     new_jobs: int = 0
     skipped_duplicates: int = 0
     skipped_old: int = 0
+    skipped_location: int = 0   # 一般工：工地點係赤鱲角／機場，篩走
     capped: int = 0
     enriched: int = 0
     backfilled: int = 0
@@ -192,7 +197,28 @@ async def run_scan(db: Session, progress: dict | None = None,
         if progress is not None:
             progress.update({"platform": platform, "phase": phase, "count": count})
 
-    for tcfg in load_track_configs(db, track):
+    track_cfgs = list(load_track_configs(db, track))
+    # 一般 track 嘅「想去嘅地點」白名單（空 = 唔篩）；IT track 唔關事。
+    wanted_locations: list[str] = []
+    for _c in track_cfgs:
+        if _c.name == "general":
+            wanted_locations = list(_c.wanted_locations or [])
+
+    def _location_ok(platform: str, category: str, texts, stage: str = "detail") -> bool:
+        """一般工要命中「想去嘅地點」才收；IT 工同大灣區計劃一律豁免。
+
+        嚴格模式：冇命中（包括只寫「港九新界」等泛指）就唔收。
+        ``stage="list"`` 時如果列表根本冇工地點（OfferToday 常見），就唔好即刻
+        篩走，留到開完詳情用 JD 內文再判斷 —— 否則永遠冇機會睇到「工作地點：觀塘」。
+        """
+        if not wanted_locations or category != "general":
+            return True
+        if platform == "govhk_gbayes":
+            return True          # 大灣區計劃（深圳／廣州…）唔跟香港地區名單
+        if stage == "list" and not (texts[0] or "").strip():
+            return True          # 未知地點 -> 等詳情階段再算
+        return bool(wanted_location_match(texts, wanted_locations))
+    for tcfg in track_cfgs:
         if scan_control.stop_requested():
             log.info("scan stop requested — breaking before track %s", tcfg.name)
             summary.stopped = True
@@ -241,6 +267,7 @@ async def run_scan(db: Session, progress: dict | None = None,
         # 大灣區 = GBAY_MAX_JOB_AGE_DAYS（7日）；其他渠道 =
         # MAX_JOB_AGE_DAYS（14日 — 淨係收刊登日期喺附近嘅新工）。
         kept: list = []
+        t_skipped_loc = 0
         for d in t_drafts:
             max_age = (settings.GBAY_MAX_JOB_AGE_DAYS if d.platform == "govhk_gbayes"
                        else settings.MAX_JOB_AGE_DAYS)
@@ -249,8 +276,16 @@ async def run_scan(db: Session, progress: dict | None = None,
                 summary.skipped_old += 1
                 log.info("dropping stale job %s/%s (posted %r, >%sd old)",
                          d.platform, d.job_id, d.posted_at, max_age)
-            else:
-                kept.append(d)
+                continue
+            # 一般 track：只收「想去嘅地點」（gov.hk 列表已經有工地點；
+            # OfferToday 好多時要開完詳情先知，嗰層喺 phase A 再篩）。
+            if not _location_ok(d.platform, tcfg.name, (d.location, d.title), stage="list"):
+                t_skipped_loc += 1
+                summary.skipped_location += 1
+                log.info("dropping off-list location job %s/%s (工地點 %r 唔喺想去名單)",
+                         d.platform, d.job_id, d.location)
+                continue
+            kept.append(d)
         t_drafts = kept
 
         # per-track global cap: at most MAX_SCAN_JOBS drafts, fair-share
@@ -284,6 +319,7 @@ async def run_scan(db: Session, progress: dict | None = None,
             "scanned": len(t_drafts),
             "new_jobs": 0,          # filled after persist
             "skipped_old": t_skipped_old,
+            "skipped_location": t_skipped_loc,
             "capped": t_capped,
         }
 
@@ -349,6 +385,19 @@ async def run_scan(db: Session, progress: dict | None = None,
                         if await _fill_detail(db, row, _fetch_detail_for(row.platform), pace=pace):
                             dropped_ids.add(row.id)
                             summary.skipped_old += 1
+                            dropped_by_track[row.category] = dropped_by_track.get(row.category, 0) + 1
+                            return
+                        # 一般工：開完詳情先知工地點 -> 唔喺「想去名單」就篩走
+                        # （OfferToday 列表唔講工地點，好多時只有 JD 入面寫住）。
+                        if (row.status != "applied"
+                                and not _location_ok(row.platform, row.category,
+                                                     (row.location, row.title, row.jd_text))):
+                            log.info("dropping off-list location job %s/%s (status=%s)",
+                                     row.platform, row.job_id_on_platform, row.status)
+                            db.delete(row)
+                            db.flush()
+                            dropped_ids.add(row.id)
+                            summary.skipped_location += 1
                             dropped_by_track[row.category] = dropped_by_track.get(row.category, 0) + 1
                             return
                         if row.jd_text:

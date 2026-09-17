@@ -170,6 +170,8 @@ export default function App() {
                         <br />
                         一般：新 {scan.last.tracks.general.new_jobs} / 掃到 {scan.last.tracks.general.scanned}
                         {scan.last.tracks.general.skipped_old > 0 && ` · 過期 ${scan.last.tracks.general.skipped_old}`}
+                        {(scan.last.tracks.general.skipped_location ?? 0) > 0 &&
+                          ` · 地點唔合篩走 ${scan.last.tracks.general.skipped_location}`}
                       </>
                     )}
                   </>
@@ -178,6 +180,12 @@ export default function App() {
                   <>
                     <br />
                     過期（超過期限：一般 14 日、大灣區 7 日）已略過 {scan.last.skipped_old} 份
+                  </>
+                )}
+                {(scan.last.skipped_location ?? 0) > 0 && (
+                  <>
+                    <br />
+                    一般工工地點唔喺「想去嘅地點」名單（或冇寫明）已篩走 {scan.last.skipped_location} 份
                   </>
                 )}
                 {scan.last.capped > 0 && (

@@ -106,8 +106,14 @@ def _profile() -> "Profile | None":
 
 
 def ai_title_keywords() -> list[str]:
-    """Keywords that mark a job title as AI-related (configurable)."""
-    return [k.strip().lower() for k in settings.CV_AI_TITLE_KEYWORDS.split(",") if k.strip()]
+    """Keywords that mark a job title as AI-related.
+
+    設定頁（profile.cv_ai_title_keywords）-> .env CV_AI_TITLE_KEYWORDS -> 內建。
+    """
+    profile = _profile()
+    text = (getattr(profile, "cv_ai_title_keywords", "") if profile else "") or ""
+    text = text.strip() or settings.CV_AI_TITLE_KEYWORDS
+    return [k.strip().lower() for k in text.split(",") if k.strip()]
 
 
 def title_is_ai(title: str) -> bool:

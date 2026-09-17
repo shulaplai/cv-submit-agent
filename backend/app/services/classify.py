@@ -133,6 +133,34 @@ def match_keyword(keyword: str, text: str) -> bool:
     ) is not None
 
 
+def resolve_wanted_locations(profile_text: str = "") -> list[str]:
+    """一般工「想去嘅地點」白名單：profile -> .env -> []（空 = 唔篩）。
+
+    用戶要求：唔用黑名單（排除機場），而係只收自己想去嘅地區；機場／赤鱲角
+    自然唔會出現，因為唔會填佢落名單。空名單 = 唔篩（避免一填錯就清空塊板）。
+    """
+    text = (profile_text or "").strip() or (settings.GENERAL_WANTED_LOCATIONS or "").strip()
+    return parse_keywords(text) if text else []
+
+
+def wanted_location_match(texts, wanted) -> str:
+    """命中嘅想去地區（冇命中回 ""）。
+
+    工地點嘅判斷要靠幾處一齊睇：``location``（gov.hk 列表已有／OfferToday 開完
+    詳情先有）＋ 職位標題 ＋ JD 內文（OfferToday 好多時 location 空白，只有 JD
+    寫住「工作地點：觀塘」）。
+    """
+    if not wanted:
+        return ""
+    for text in texts:
+        if not text:
+            continue
+        for kw in wanted:
+            if match_keyword(kw, text):
+                return kw
+    return ""
+
+
 def title_matches(title: str, keywords: list[str]) -> bool:
     """True when any keyword matches the (lowercased) title."""
     if not keywords or not title:
@@ -184,6 +212,8 @@ class TrackConfig:
     offertoday_search_terms: list[str] = field(default_factory=list)
     max_searches: int = 0     # OfferToday general: cap on keyword searches
     non_it_keywords: list[str] = field(default_factory=list)  # 唔當 IT 嘅字眼
+    # 一般 track：「想去嘅地點」白名單 — 只收寫得明確又喺名單內嘅工。空 = 唔篩。
+    wanted_locations: list[str] = field(default_factory=list)
 
     @staticmethod
     def defaults(name: str) -> "TrackConfig":
@@ -201,6 +231,7 @@ class TrackConfig:
         return TrackConfig(
             name="general", label="一般",
             keywords=general_kws, it_keywords=it_kws, non_it_keywords=non_it,
+            wanted_locations=resolve_wanted_locations(),
             govhk_max_jobs=settings.GOVHK_GENERAL_MAX_JOBS,
             offertoday_max_per_search=settings.OFFERTODAY_GENERAL_MAX_PER_SEARCH,
             offertoday_search_terms=(
