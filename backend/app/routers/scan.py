@@ -1,7 +1,9 @@
 """Scan endpoints + in-memory scan state + backfill trigger."""
 import asyncio
+import json
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from sqlalchemy.orm import Session
@@ -56,6 +58,7 @@ async def _scan_job(track: str | None = None, channels: list[str] | None = None)
             "skipped_duplicates": summary.skipped_duplicates,
             "skipped_old": summary.skipped_old,
             "skipped_location": summary.skipped_location,
+            "location_uncertain": summary.location_uncertain,
             "capped": summary.capped,
             "enriched": summary.enriched,
             "backfilled": summary.backfilled,
@@ -67,6 +70,7 @@ async def _scan_job(track: str | None = None, channels: list[str] | None = None)
             "track": track or "all",
             "channels": channels or [],
         }
+        _record_scan_time()
     except Exception as e:  # noqa: BLE001
         log.exception("scan crashed")
         _state["last_error"] = str(e)
@@ -217,6 +221,57 @@ async def start_backfill():
     _state["last_error"] = None
     asyncio.create_task(_backfill_job())
     return {"started": True, "message": "補齊已開始（最多 10 份最舊未處理記錄）"}
+
+
+def _last_scan_path() -> Path:
+    """最後掃描時間檔案（可用 LAST_SCAN_PATH 覆寫 -> 測試先唔會污染真資料）。"""
+    import os
+
+    override = os.environ.get("LAST_SCAN_PATH")
+    if override:
+        return Path(override)
+    return Path(__file__).resolve().parents[3] / "data" / "last_scan.json"
+
+
+_LAST_SCAN_FILE = _last_scan_path()
+
+
+def _record_scan_time() -> None:
+    """記低最後一次掃描時間（開機 catch-up 要用；記憶體唔夠，restart 就冇）。"""
+    try:
+        _LAST_SCAN_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _LAST_SCAN_FILE.write_text(
+            json.dumps({"at": datetime.now(timezone.utc).isoformat()}), encoding="utf-8")
+    except Exception as e:  # noqa: BLE001 — 記錄失敗唔應該影響掃描
+        log.warning("記錄 last_scan 失敗: %s", e)
+
+
+def last_scan_age_hours() -> float | None:
+    """上次掃描距今幾多小時（None = 從來冇紀錄）。"""
+    try:
+        raw = json.loads(_LAST_SCAN_FILE.read_text(encoding="utf-8"))
+        at = datetime.fromisoformat(raw["at"])
+        if at.tzinfo is None:
+            at = at.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - at).total_seconds() / 3600
+    except FileNotFoundError:
+        return None
+    except Exception as e:  # noqa: BLE001
+        log.warning("讀 last_scan 失敗: %s", e)
+        return None
+
+
+def start_catchup_scan() -> bool:
+    """即刻補掃一次（背景）。已經有 scan／補 JD 跑緊就唔會重複開。"""
+    if _state["running"]:
+        log.info("catch-up: 已經有 scan 跑緊，唔補")
+        return False
+    _state["running"] = True
+    _state["last_error"] = None
+    _state["stop_requested"] = False
+    scan_control.clear_stop()
+    asyncio.create_task(_scan_job())
+    return True
 
 
 @router.get("/status")

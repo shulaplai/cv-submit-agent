@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (Boolean, Date, DateTime, ForeignKey, Integer, String, Text,
+                        UniqueConstraint)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -102,6 +103,8 @@ class JobApplication(Base):
     title: Mapped[str] = mapped_column(String(300), default="")
     company: Mapped[str] = mapped_column(String(300), default="")
     location: Mapped[str] = mapped_column(String(200), default="")
+    # 一般工：地點寫唔明（列表／JD 都冇提任何地區）-> 保留但標示（唔靜靜篩走）
+    location_uncertain: Mapped[bool] = mapped_column(Boolean, default=False)
     salary_range: Mapped[str] = mapped_column(String(200), default="")
     jd_text: Mapped[str] = mapped_column(Text, default="")
     jd_language: Mapped[str] = mapped_column(String(10), default="zh")  # en | zh

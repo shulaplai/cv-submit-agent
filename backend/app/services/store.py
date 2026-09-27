@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from ..models import JobApplication, utcnow
 from .jobdate import parse_posted_date
+from .language import detect_language
 from .scraper_base import JobDraft
 
 log = logging.getLogger(__name__)
@@ -45,9 +46,12 @@ def persist_drafts(db: Session, drafts: list[JobDraft]) -> tuple[int, int, list[
             title=d.title,
             company=d.company,
             location=d.location,
+            location_uncertain=bool((d.raw or {}).get("location_uncertain")),
             salary_range=d.salary_range,
             jd_text=d.jd_text,
-            jd_language="en",
+            # 以前硬編 "en"，令中文工（尤其 OfferToday 冇 JD 嗰啲）一律標英文
+            # -> 申請時交錯語言嘅 CV／自我介紹。入庫即用標題初判。
+            jd_language=detect_language(d.jd_text or d.title or ""),
             posted_at=d.posted_at,
             posted_date=parse_posted_date(d.posted_at or ""),
             match_score=0,

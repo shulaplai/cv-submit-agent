@@ -128,9 +128,44 @@ def build_application_text(row: JobApplication, cl_text: str) -> str:
     return "\n\n".join(parts)
 
 
+# 同一份工唔可以同時投兩次（兩個 tab／double-click／batch 撞單次）。
+# 用 process 內嘅 set 做互斥：第二個請求直接返回「處理中」而唔會再開頁。
+_applying_ids: set[int] = set()
+
+
 async def open_apply(row: JobApplication, cl_text: str = "", auto: bool = False,
                      template_key: str = "standard") -> dict:
-    """Open + prefill (or auto-submit) the application flow for a job."""
+    """Open + prefill (or auto-submit) the application flow for a job.
+
+    三重守門（用戶要求：唔可以重複投遞）：
+      1. 已經 applied -> 直接拒投；
+      2. 同一份工正在投遞中 -> 拒投（避免兩個分頁同時交）；
+      3. 其餘序列化執行。
+    """
+    if (getattr(row, "status", "") or "") == "applied":
+        when = getattr(row, "applied_at", None)
+        return {"ok": True, "kind": "already_applied", "submitted": False,
+                "url": getattr(row, "url", ""),
+                "message": ("呢份工已經投過"
+                            + (f"（{when:%Y-%m-%d %H:%M}）" if when else "")
+                            + "，唔會再交一次。")}
+    jid = getattr(row, "id", None)
+    if jid is not None and jid in _applying_ids:
+        return {"ok": True, "kind": "in_progress", "submitted": False,
+                "url": getattr(row, "url", ""),
+                "message": "呢份工正在投遞中，唔會重複開多一次。"}
+    if jid is not None:
+        _applying_ids.add(jid)
+    try:
+        return await _open_apply_inner(row, cl_text, auto=auto, template_key=template_key)
+    finally:
+        if jid is not None:
+            _applying_ids.discard(jid)
+
+
+async def _open_apply_inner(row: JobApplication, cl_text: str = "", auto: bool = False,
+                            template_key: str = "standard") -> dict:
+    """The actual dispatch (guards + mutual exclusion live in open_apply)."""
     if row.apply_method == "external_link":
         return {"ok": True, "kind": "external_link", "url": row.external_url or row.url,
                 "submitted": False,
@@ -464,18 +499,30 @@ def _offertoday_settings() -> dict:
     }
 
 
-async def generate_after_cv_intro(lang: str, topic: str = "general") -> str:
+async def generate_after_cv_intro(lang: str, topic: str = "general",
+                                  title: str = "") -> str:
     """AI-write the ~100-char post-CV self-intro (ai / it / general, en vs zh).
+
+    ``title`` 決定用邊個版本嘅 CV 內容（同 CV 版本階梯一致）。以前呢個位漏
+    傳 ``title``，NameError 被 ``except Exception`` 吞掉 → 生成時完全冇履歷
+    內容（只有技能清單），而家修好。
 
     Used by the settings endpoint and by the OfferToday apply flow. Raises
     LLMError when generation fails (callers fall back to a default template).
     """
     from ..services import llm as llm_svc
-    from ..services.cv_loader import get_cv_text, load_skills
+    from ..services.cv_loader import CVError, get_cv_text, load_skills
 
+    # 冇指定職位（例如喺設定頁撳生成）-> 用 topic 對應嘅 CV 版本：
+    # ai -> AI 版、it -> Full-stack/Developer 版、general -> 通用版
+    lookup_title = title or {"ai": "AI Engineer", "it": "Software Developer"}.get(topic, "")
     try:
-        cv_text = get_cv_text(lang, title)
-    except Exception:  # noqa: BLE001 — no CV configured, still generate generic
+        cv_text = get_cv_text(lang, lookup_title)
+    except CVError as e:                      # 冇設 CV 路徑：照生成泛用版
+        log.warning("after-cv intro: 讀唔到 CV（%s），會用技能清單生成", e)
+        cv_text = ""
+    except Exception as e:                    # noqa: BLE001 — 其他錯要知，唔好靜靜吞
+        log.warning("after-cv intro: 讀 CV 出錯: %s", e)
         cv_text = ""
     skills = load_skills()
     angle = {"ai": "AI Agent / 大型語言模型應用開發",
@@ -563,7 +610,8 @@ async def _offertoday_intro(row: JobApplication, cfg: dict) -> str:
         if saved:
             return saved
     try:
-        return await generate_after_cv_intro(lang, topic)
+        return await generate_after_cv_intro(lang, topic,
+                                            title=getattr(row, "title", "") or "")
     except Exception:  # noqa: BLE001 — LLM missing/failed -> use template
         return defaults[topics[0]]
 
@@ -624,16 +672,21 @@ async def _offertoday(row: JobApplication, cl_text: str, auto: bool) -> dict:
     cfg = _offertoday_settings()
 
     # 1. 發履歷 -> 「選擇履歷」dialog -> pick CV by JD language
+    cv_info: dict = {}
     picked = await _offertoday_pick_cv(page, row.jd_language, cfg["cv_zh_kw"], cfg["cv_en_kw"],
                                         title=row.title,
-                                        plan=offertoday_cv_keyword_plan(row, cfg))
+                                        plan=offertoday_cv_keyword_plan(row, cfg),
+                                        info=cv_info)
+    cv_warn = ""
+    if cv_info.get("fallback"):
+        cv_warn = " ⚠ 搵唔到指定版本嘅 CV，用咗另一個版本（請去 OfferToday 核對）。"
     if not picked:
         return {"ok": True, "kind": "form", "submitted": False, "url": page.url,
                 "message": "⚠ 未揾到/揀到已上傳嘅 CV，請喺視窗手動撳「發履歷」揀。"}
 
     if not auto:
         return {"ok": True, "kind": "form", "submitted": False, "url": page.url,
-                "message": f"已揀履歷：{picked}。請喺視窗撳「發送」發 CV，再自己打自我介紹。"}
+                "message": f"已揀履歷：{picked}。請喺視窗撳「發送」發 CV，再自己打自我介紹。{cv_warn}"}
 
     # 2. send the CV (dialog 發送)
     send_cv = page.locator("[role='dialog'] button:has-text('發送')").last
@@ -652,20 +705,26 @@ async def _offertoday(row: JobApplication, cl_text: str, auto: bool) -> dict:
     intro = await _offertoday_intro(row, cfg)
     if await _offertoday_send_message(page, intro):
         return {"ok": True, "kind": "submitted", "submitted": True, "url": page.url,
-                "message": f"✔ OfferToday 已發送履歷（{picked}）同自我介紹。"}
+                "message": f"✔ OfferToday 已發送履歷（{picked}）同自我介紹。{cv_warn}"}
     return {"ok": True, "kind": "submitted", "submitted": True, "url": page.url,
-            "message": f"✔ 已發送履歷（{picked}），但自我介紹未能自動發送，請喺視窗手動補發。"}
+            "message": f"✔ 已發送履歷（{picked}），但自我介紹未能自動發送，請喺視窗手動補發。{cv_warn}"}
 
 
 def _offertoday_cv_matches(filename: str, language: str, zh_kw: str = "", en_kw: str = "") -> bool:
-    """Whether an OfferToday resume filename matches the JD language."""
+    """Whether an OfferToday resume filename matches the JD language.
+
+    關鍵字用詞邊界比對（同 4 類關鍵字一致）—— 純子字串會令 `en` 命中
+    `general`、`ai` 命中 `Lai` 之類嘅錯誤。
+    """
+    from .classify import match_keyword
+
     fn = filename.lower()
     if language == "zh":
-        if zh_kw and zh_kw.lower() in fn:
+        if zh_kw and match_keyword(zh_kw, fn):
             return True
         return any(m in fn for m in _ZH_CV_MARKERS)
     # English: configured keyword, else "not Chinese"
-    if en_kw and en_kw.lower() in fn:
+    if en_kw and match_keyword(en_kw, fn):
         return True
     if any(m in fn for m in _ZH_CV_MARKERS):
         return False
@@ -673,7 +732,8 @@ def _offertoday_cv_matches(filename: str, language: str, zh_kw: str = "", en_kw:
 
 
 async def _offertoday_pick_cv(page, language: str, zh_kw: str = "", en_kw: str = "",
-                               title: str = "", plan: list[tuple[str, str]] | None = None) -> str:
+                               title: str = "", plan: list[tuple[str, str]] | None = None,
+                               info: dict | None = None) -> str:
     """Click 「發履歷」 to open the 「選擇履歷」 dialog and pick a CV.
 
     ``plan``（用戶設定嘅 4 類檔名關鍵字）為先，依次試：
@@ -733,8 +793,15 @@ async def _offertoday_pick_cv(page, language: str, zh_kw: str = "", en_kw: str =
             if hit:
                 chosen = hit
                 break
+    if info is not None:
+        # 交返用咗邊個版本 / 有冇降級，等上層可以喺訊息度提醒用戶
+        info["variant_label"] = chosen_label
+        info["fallback"] = bool((plan or []) and not chosen_label)
     if chosen_label:
         log.info("offertoday pick cv: %s（%s）", chosen[0], chosen_label)
+    elif plan:
+        log.warning("offertoday pick cv: 搵唔到指定版本（%s），改用 %s",
+                    [f"{lbl}={kw}" for lbl, kw in plan], chosen[0])
     try:
         await items.nth(chosen[1]).click(timeout=5000)
         return chosen[0]

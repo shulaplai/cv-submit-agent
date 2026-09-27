@@ -14,6 +14,9 @@ os.environ["SCAN_JOB_DELAY_MIN_SECONDS"] = "0"  # no politeness pacing in tests
 os.environ["SCAN_JOB_DELAY_MAX_SECONDS"] = "0"
 os.environ["LLM_API_KEY"] = ""
 os.environ["LLM_FALLBACK_API_KEY"] = ""
+# 唔好污染真資料：log 同 last_scan 記錄都寫入臨時目錄
+os.environ["CVSUBMIT_LOG_DIR"] = os.path.join(_TMP, "logs")
+os.environ["LAST_SCAN_PATH"] = os.path.join(_TMP, "last_scan.json")
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402

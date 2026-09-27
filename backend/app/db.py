@@ -55,6 +55,7 @@ _COLUMN_MIGRATIONS = [
     ("profiles", "after_cv_intro_ai_zh", "TEXT NOT NULL DEFAULT ''"),
     ("profiles", "after_cv_intro_ai_en", "TEXT NOT NULL DEFAULT ''"),
     ("profiles", "cv_ai_title_keywords", "TEXT NOT NULL DEFAULT ''"),
+    ("job_applications", "location_uncertain", "BOOLEAN NOT NULL DEFAULT 0"),
     ("profiles", "offertoday_cv_ai_keyword", "TEXT NOT NULL DEFAULT ''"),
     ("profiles", "offertoday_cv_it_keyword", "TEXT NOT NULL DEFAULT ''"),
     ("profiles", "offertoday_cv_general_zh_keyword", "TEXT NOT NULL DEFAULT ''"),
@@ -114,6 +115,7 @@ def migrate() -> None:
                           "ON job_applications (category)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_job_applications_posted_date "
                           "ON job_applications (posted_date)"))
+    _backfill_jd_language()
     # gov.hk now splits into two categories; legacy rows belong to the GBA scheme.
     with engine.begin() as conn:
         conn.execute(text(
@@ -184,6 +186,33 @@ def _backfill_categories() -> None:
         if changed:
             db.commit()
             log.info("category backfill: re-tagged %s legacy rows", changed)
+    finally:
+        db.close()
+
+
+def _backfill_jd_language() -> None:
+    """一次性（可重複執行）校正 jd_language。
+
+    以前入庫硬編 "en"，令中文 JD（尤其 OfferToday）一律標錯語言，申請時就會
+    交錯語言嘅 CV／自我介紹。呢個 pass 按 JD／標題重新判斷，唔會改任何 status。
+    """
+    from .services.language import detect_language
+
+    try:
+        from .models import JobApplication
+    except Exception:  # noqa: BLE001
+        return
+    db = SessionLocal()
+    try:
+        changed = 0
+        for row in db.query(JobApplication).all():
+            correct = detect_language((row.jd_text or "").strip() or (row.title or ""))
+            if correct and row.jd_language != correct:
+                row.jd_language = correct
+                changed += 1
+        if changed:
+            db.commit()
+            log.info("jd_language backfill: corrected %s rows", changed)
     finally:
         db.close()
 

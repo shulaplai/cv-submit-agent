@@ -483,7 +483,7 @@ async def test_offertoday_auto_sends(monkeypatch):
         return FakeSession()
 
     monkeypatch.setattr(apply_bot, "get_browser", fake_get_browser)
-    async def fake_gen_intro(lang, is_it):
+    async def fake_gen_intro(lang, topic="general", title=""):
         return "AI_GENERATED_INTRO_IT_EN"
     monkeypatch.setattr(apply_bot, "generate_after_cv_intro", fake_gen_intro)
 
@@ -533,7 +533,7 @@ async def test_offertoday_intro_it_vs_general(monkeypatch):
     assert await _offertoday_intro(gen_row, cfg_saved) == "我嘅自訂一般簡介"
 
     # empty -> AI-generated (mock the LLM); topic: ai / it / general
-    async def fake_gen(lang, topic="general"):
+    async def fake_gen(lang, topic="general", title=""):
         return f"AI_{topic.upper()}_{lang.upper()}"
     monkeypatch.setattr(apply_bot, "generate_after_cv_intro", fake_gen)
 
@@ -548,7 +548,7 @@ async def test_offertoday_intro_it_vs_general(monkeypatch):
     assert await _offertoday_intro(gen_row2, cfg) == "AI_GENERAL_ZH"
 
     # AI fails -> fall back to default template
-    async def fail_gen(lang, topic="general"):
+    async def fail_gen(lang, topic="general", title=""):
         raise RuntimeError("llm down")
     monkeypatch.setattr(apply_bot, "generate_after_cv_intro", fail_gen)
     fallback = await _offertoday_intro(gen_row2, cfg)
@@ -583,9 +583,10 @@ async def test_offertoday_intro_ai_agent_ladder(monkeypatch):
     # 全部都冇填 -> AI 生成，topic 一定係 ai
     seen = {}
 
-    async def fake_gen(lang, topic="general"):
+    async def fake_gen(lang, topic="general", title=""):
         seen["topic"] = topic
         seen["lang"] = lang
+        seen["title"] = title
         return "生成嘅 AI 版"
     monkeypatch.setattr(apply_bot, "generate_after_cv_intro", fake_gen)
     empty_cfg = {k: "" for k in cfg}
@@ -593,7 +594,8 @@ async def test_offertoday_intro_ai_agent_ladder(monkeypatch):
     ai_row2.title = "機器學習工程師"
     ai_row2.jd_language = "en"
     assert await _offertoday_intro(ai_row2, empty_cfg) == "生成嘅 AI 版"
-    assert seen == {"topic": "ai", "lang": "en"}
+    # topic 要係 ai、語言跟 JD，而且一定要傳埋 title（先讀得到對應版本嘅 CV）
+    assert seen == {"topic": "ai", "lang": "en", "title": "機器學習工程師"}
 
 
 def test_intro_topic_picks_ai_from_title():

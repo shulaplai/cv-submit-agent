@@ -49,6 +49,10 @@ class Settings(BaseSettings):
     # Scheduled scan: every SCAN_DAY_INTERVAL days at SCAN_HOUR (0 disables).
     # 凌晨三點（香港時間）先開始掃描。
     SCAN_HOUR: int = 3
+    # APScheduler 錯過寬限（秒）：睡眠／時鐘偏差唔可以令掃描被靜靜跳過
+    SCAN_MISFIRE_GRACE_SECONDS: int = 3600
+    # 開機／喚醒時，如果上次掃描已經超過咁多小時就即刻補掃一次（0 = 唔補）
+    SCAN_CATCHUP_HOURS: float = 36.0
     SCAN_DAY_INTERVAL: int = 2
     # LLM budget per scan: only the top-N (by keyword pre-score) new jobs get
     # full LLM match + CL; the rest are left for backfill / manual refresh.

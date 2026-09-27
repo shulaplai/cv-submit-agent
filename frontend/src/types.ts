@@ -27,6 +27,7 @@ export interface Job {
   title: string;
   company: string;
   location: string;
+  location_uncertain?: boolean;
   salary_range: string;
   jd_text: string;
   jd_language: string;
@@ -66,6 +67,7 @@ export interface ScanStatus {
     skipped_duplicates: number;
     skipped_old: number;
     skipped_location?: number;
+    location_uncertain?: number;
     capped: number;
     enriched: number;
     backfilled: number;

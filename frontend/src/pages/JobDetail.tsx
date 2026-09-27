@@ -268,6 +268,14 @@ export function JobDetail({
       <div className="dmeta">
         <span>{job.company || "—"}</span>
         <span>{job.location || "—"}</span>
+        {job.location_uncertain && (
+          <span
+            className="chip low"
+            title="JD 同列表都冇寫明地區，唔喺「想去嘅地點」名單內搵到——已保留畀你人手睇"
+          >
+            ⚠ 地點未確定
+          </span>
+        )}
         <span>{job.salary_range || "薪酬不詳"}</span>
         <span>match {job.match_score}/100</span>
         {job.posted_at && <span>刊登 {job.posted_at}</span>}

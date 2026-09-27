@@ -185,7 +185,13 @@ export default function App() {
                 {(scan.last.skipped_location ?? 0) > 0 && (
                   <>
                     <br />
-                    一般工工地點唔喺「想去嘅地點」名單（或冇寫明）已篩走 {scan.last.skipped_location} 份
+                    一般工工地點寫明係其他地區（唔喺想去名單）已篩走 {scan.last.skipped_location} 份
+                  </>
+                )}
+                {(scan.last.location_uncertain ?? 0) > 0 && (
+                  <>
+                    <br />
+                    ⚠ 一般工地點寫唔明（{scan.last.location_uncertain} 份）已保留，卡片標示「地點未確定」
                   </>
                 )}
                 {scan.last.capped > 0 && (

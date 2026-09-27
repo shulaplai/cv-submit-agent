@@ -217,6 +217,19 @@ async def open_email_compose(row: JobApplication, cl_text: str, send: bool = Fal
     """
     from .cv_loader import VARIANT_LABEL, resolve_cv_for_job
 
+    # 守門（用戶要求：唔可以寄垃圾畀僱主）
+    # 1. 冇 Cover Letter -> 唔好寄（以前會寄「（請喺 UI 先生成/編輯 Cover Letter）」）
+    if not (cl_text or "").strip():
+        return {"ok": True, "kind": "needs_manual", "submitted": False,
+                "message": "冇 Cover Letter——唔會自動寄出。請先喺職位詳情頁生成 CL 再投。"}
+    # 2. 冇 CV 檔案 -> 自動發送一律唔寄（半自動開 draft 就照開，你自己補附件）
+    from pathlib import Path as _Path
+    _cv_probe, _ = resolve_cv_for_job(row.title, row.jd_language)
+    has_cv = bool(_cv_probe) and _Path(_cv_probe).exists()
+    if send and not has_cv:
+        return {"ok": True, "kind": "needs_manual", "submitted": False,
+                "message": "冇 CV 檔案可以附件——未寄出。請先去設定頁上載/設定 CV 路徑。"}
+
     # 發送前最後一執：AI 潤飾 CL（通順 + 貼合呢份工）。失敗就照用原文。
     if cl_text and cl_text.strip():
         try:
@@ -235,15 +248,18 @@ async def open_email_compose(row: JobApplication, cl_text: str, send: bool = Fal
         from .cv_loader import resolve_cv_path
         cv_path = resolve_cv_path("zh" if row.jd_language == "en" else "en")
         cv_variant = "default"
-    email = build_email(row, cl_text or "（請喺 UI 先生成/編輯 Cover Letter）", cv_path, template_key)
+    if not has_cv:
+        log.warning("email 冇 CV 附件（job %s / %s）", getattr(row, "id", "?"), row.title)
+    email = build_email(row, cl_text, cv_path, template_key)
     # 話俾用戶知用咗邊個版本嘅 CV（AI 版／Full-stack 版／Developer 版／通用版）
     cv_tag = f"（CV：{VARIANT_LABEL.get(cv_variant, cv_variant)}）"
 
     if send:
         ok, note = send_email_via_mail(email)
         if ok:
+            warn = "" if has_cv else "（⚠ 冇 CV 附件）"
             return {"ok": True, "kind": "email_sent", "to": email["to"],
-                    "message": f"{note} {cv_tag}",
+                    "message": f"{note} {cv_tag}{warn}",
                     "submitted": True,
                     "preview": {"to": email["to"], "subject": email["subject"], "body": email["body"]}}
         # sending failed -> fall back to opening a draft for review

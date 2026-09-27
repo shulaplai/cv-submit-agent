@@ -19,9 +19,10 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..models import CoverLetter, JobApplication, Profile
 from . import scraper_govhk, scraper_jobsdb, scraper_offertoday
-from .classify import (TrackConfig, parse_keywords, resolve_general_keywords,
-                       resolve_it_keywords, resolve_non_it_keywords,
-                       resolve_wanted_locations, wanted_location_match)
+from .classify import (TrackConfig, known_location_match, parse_keywords,
+                       resolve_general_keywords, resolve_it_keywords,
+                       resolve_non_it_keywords, resolve_wanted_locations,
+                       wanted_location_match)
 from .cl_generator import generate_cl_checked
 from .cv_loader import get_cv_text, load_skills
 from .language import detect_language
@@ -164,7 +165,8 @@ class ScanSummary:
     new_jobs: int = 0
     skipped_duplicates: int = 0
     skipped_old: int = 0
-    skipped_location: int = 0   # 一般工：工地點係赤鱲角／機場，篩走
+    skipped_location: int = 0   # 一般工：寫明另一個地區（唔喺想去名單）-> 篩走
+    location_uncertain: int = 0  # 一般工：冇寫地點 -> 保留但標示
     capped: int = 0
     enriched: int = 0
     backfilled: int = 0
@@ -204,20 +206,29 @@ async def run_scan(db: Session, progress: dict | None = None,
         if _c.name == "general":
             wanted_locations = list(_c.wanted_locations or [])
 
-    def _location_ok(platform: str, category: str, texts, stage: str = "detail") -> bool:
-        """一般工要命中「想去嘅地點」才收；IT 工同大灣區計劃一律豁免。
+    def _location_verdict(platform: str, category: str, texts,
+                          stage: str = "detail") -> str:
+        """一般工嘅地點判斷，回 "ok" / "drop" / "uncertain"。
 
-        嚴格模式：冇命中（包括只寫「港九新界」等泛指）就唔收。
-        ``stage="list"`` 時如果列表根本冇工地點（OfferToday 常見），就唔好即刻
-        篩走，留到開完詳情用 JD 內文再判斷 —— 否則永遠冇機會睇到「工作地點：觀塘」。
+        - IT 工、大灣區計劃、冇設名單 -> "ok"
+        - 命中「想去嘅地點」 -> "ok"
+        - 寫咗**另一個**香港地區（例如屯門） -> "drop"（肯定唔想去）
+        - 完全冇寫地點／只寫「港九新界」等泛指 -> "uncertain"
+          （用戶要求：保護供應，唔確定就保留但標示，唔好靜靜篩走）
+        ``stage="list"``：列表冇工地點時（OfferToday 常見）唔可以即刻落判斷，
+        要留到開完詳情用 JD 內文再算。
         """
         if not wanted_locations or category != "general":
-            return True
+            return "ok"
         if platform == "govhk_gbayes":
-            return True          # 大灣區計劃（深圳／廣州…）唔跟香港地區名單
+            return "ok"          # 大灣區計劃（深圳／廣州…）唔跟香港地區名單
+        if wanted_location_match(texts, wanted_locations):
+            return "ok"
         if stage == "list" and not (texts[0] or "").strip():
-            return True          # 未知地點 -> 等詳情階段再算
-        return bool(wanted_location_match(texts, wanted_locations))
+            return "ok"          # 未知 -> 等詳情階段再算
+        if known_location_match(texts):
+            return "drop"        # 寫明另一個地區：肯定唔喺想去名單
+        return "uncertain"       # 冇寫地點 -> 保留但標示
     for tcfg in track_cfgs:
         if scan_control.stop_requested():
             log.info("scan stop requested — breaking before track %s", tcfg.name)
@@ -279,12 +290,16 @@ async def run_scan(db: Session, progress: dict | None = None,
                 continue
             # 一般 track：只收「想去嘅地點」（gov.hk 列表已經有工地點；
             # OfferToday 好多時要開完詳情先知，嗰層喺 phase A 再篩）。
-            if not _location_ok(d.platform, tcfg.name, (d.location, d.title), stage="list"):
+            _verdict = _location_verdict(d.platform, tcfg.name, (d.location, d.title),
+                                         stage="list")
+            if _verdict == "drop":
                 t_skipped_loc += 1
                 summary.skipped_location += 1
                 log.info("dropping off-list location job %s/%s (工地點 %r 唔喺想去名單)",
                          d.platform, d.job_id, d.location)
                 continue
+            if _verdict == "uncertain":
+                d.raw = {**(d.raw or {}), "location_uncertain": True}
             kept.append(d)
         t_drafts = kept
 
@@ -314,6 +329,8 @@ async def run_scan(db: Session, progress: dict | None = None,
         for d in t_drafts:
             if not d.category:
                 d.category = tcfg.name
+            if (d.raw or {}).get("location_uncertain"):
+                summary.location_uncertain += 1
         all_drafts.extend(t_drafts)
         summary.tracks[tcfg.name] = {
             "scanned": len(t_drafts),
@@ -389,9 +406,10 @@ async def run_scan(db: Session, progress: dict | None = None,
                             return
                         # 一般工：開完詳情先知工地點 -> 唔喺「想去名單」就篩走
                         # （OfferToday 列表唔講工地點，好多時只有 JD 入面寫住）。
-                        if (row.status != "applied"
-                                and not _location_ok(row.platform, row.category,
-                                                     (row.location, row.title, row.jd_text))):
+                        _verdict = _location_verdict(
+                            row.platform, row.category,
+                            (row.location, row.title, row.jd_text))
+                        if _verdict == "drop" and row.status != "applied":
                             log.info("dropping off-list location job %s/%s (status=%s)",
                                      row.platform, row.job_id_on_platform, row.status)
                             db.delete(row)
@@ -400,6 +418,11 @@ async def run_scan(db: Session, progress: dict | None = None,
                             summary.skipped_location += 1
                             dropped_by_track[row.category] = dropped_by_track.get(row.category, 0) + 1
                             return
+                        if _verdict == "uncertain" and not row.location_uncertain:
+                            # 保留但標示（供應保護）：UI 會出「⚠ 地點未確定」
+                            row.location_uncertain = True
+                            summary.location_uncertain += 1
+                            db.flush()
                         if row.jd_text:
                             summary.details_fetched += 1
                             fetch_count["n"] += 1

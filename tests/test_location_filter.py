@@ -99,13 +99,39 @@ def test_on_list_location_kept(db, monkeypatch):
     assert summary.tracks["general"]["skipped_location"] == 1
 
 
-@pytest.mark.parametrize("location", ["", "港九新界", "香港島,九龍半島", "深圳"])
-def test_vague_or_blank_location_is_dropped(db, monkeypatch, location):
-    """嚴格模式：寫唔明或者冇寫地點 -> 唔收。"""
+@pytest.mark.parametrize("location", ["屯門區", "赤鱲角", "深水埗"])
+def test_other_known_district_is_dropped(db, monkeypatch, location):
+    """寫明另一個香港地區 -> 肯定唔喺想去名單 -> 篩走。"""
     from app.models import JobApplication
 
     _whitelist(db)
-    _run(db, monkeypatch, [_draft("tokVague", "文員", location=location,
+    summary = _run(db, monkeypatch, [_draft("tokOther", "文員", location=location,
+                                            platform="govhk_general")])
+    assert db.query(JobApplication).count() == 0
+    assert summary.skipped_location == 1
+
+
+@pytest.mark.parametrize("location", ["", "港九新界", "香港島,九龍半島"])
+def test_unknown_location_is_kept_but_flagged(db, monkeypatch, location):
+    """用戶要求（保護供應）：地點寫唔明 -> 保留但標示，唔好靜靜篩走。"""
+    from app.models import JobApplication
+
+    _whitelist(db)
+    summary = _run(db, monkeypatch, [_draft("tokVague", "文員", location=location,
+                                            platform="govhk_general")])
+    rows = db.query(JobApplication).all()
+    assert len(rows) == 1
+    assert rows[0].location_uncertain is True
+    assert summary.skipped_location == 0
+    assert summary.location_uncertain == 1
+
+
+def test_known_other_country_is_dropped(db, monkeypatch):
+    """深圳唔喺想去名單（而且唔係大灣區計劃）-> 篩走。"""
+    from app.models import JobApplication
+
+    _whitelist(db)
+    _run(db, monkeypatch, [_draft("tokSz", "文員", location="深圳",
                                   platform="govhk_general")])
     assert db.query(JobApplication).count() == 0
 
@@ -176,6 +202,24 @@ def test_jd_with_off_list_district_is_dropped(db, monkeypatch):
                    offertoday_fill=fake_fetch_detail)
     assert db.query(JobApplication).count() == 0
     assert summary.skipped_location == 1
+
+
+def test_jd_without_any_district_is_kept_and_flagged(db, monkeypatch):
+    """OfferToday 抽唔到地點：保留但標示（保護供應）。"""
+    from app.models import JobApplication
+
+    _whitelist(db)
+
+    async def fake_fetch_detail(session, draft):
+        draft.jd_text = "職責：文件處理、跟單、一般辦公室工作"
+        return draft
+
+    summary = _run(db, monkeypatch, [_draft("tokJdNoLoc", "行政助理")],
+                   offertoday_fill=fake_fetch_detail)
+    rows = db.query(JobApplication).all()
+    assert len(rows) == 1
+    assert rows[0].location_uncertain is True
+    assert summary.location_uncertain >= 1
 
 
 def test_applied_row_is_never_dropped(db, monkeypatch):

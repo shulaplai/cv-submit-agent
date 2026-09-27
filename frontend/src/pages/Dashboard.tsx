@@ -504,6 +504,14 @@ export function Dashboard({
                 </div>
                 <div className="meta">
                   <span>{job.location || "—"}</span>
+                  {job.location_uncertain && (
+                    <span
+                      className="chip low"
+                      title="JD 同列表都冇寫明地區，唔喺「想去嘅地點」名單內搵到——已保留畀你人手睇"
+                    >
+                      ⚠ 地點未確定
+                    </span>
+                  )}
                   <span>{job.salary_range || "薪酬不詳"}</span>
                   <span title="入庫日期（入咗職位台嘅日子）">入庫 {fmtDate(job.created_at)}</span>
                 </div>

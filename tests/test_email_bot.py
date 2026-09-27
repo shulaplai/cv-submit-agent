@@ -137,6 +137,10 @@ def test_send_email_via_mail_failure_falls_to_draft(monkeypatch, tmp_path):
         return R()
 
     monkeypatch.setattr(subprocess, "run", fake_run)
+    # 有 CV 檔案先可以自動寄（新守門：冇 CV 唔會自動寄）
+    import app.services.cv_loader as _cvl
+    monkeypatch.setattr(_cvl, "resolve_cv_for_job",
+                        lambda title, lang: (__file__, "default"))
     result = asyncio.run(open_email_compose(FakeRow(), "CL 內容", send=True))
     assert result["submitted"] is False
     assert "自動發送" in result["message"]

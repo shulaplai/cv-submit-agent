@@ -231,6 +231,16 @@ async def _run_batch(ids: list[int], auto: bool | None) -> None:
         )
         _batch_state.update({"running": True, "total": len(ids), "done": 0, "results": []})
 
+        # 同名同公司（dup_key）嘅工喺跨平台會各有一行；同一批次只投一份，
+        # 免得同一份工（例如同時喺 gov.hk IT 同一般 channel 出現）交兩次。
+        batch_dup_keys: dict[str, int] = {}
+        for _jid in ids:
+            _row = db.get(JobApplication, _jid)
+            if _row is not None and _row.status == "applied":
+                _k = _dup_key_of(_row)
+                if _k:
+                    batch_dup_keys.setdefault(_k, _jid)
+
         for job_id in ids:
             entry: dict = {"id": job_id, "title": "", "ok": False,
                            "submitted": False, "message": ""}
@@ -240,10 +250,19 @@ async def _run_batch(ids: list[int], auto: bool | None) -> None:
                     entry["message"] = "揾唔到職位"
                 elif row.status == "applied":
                     entry.update({"ok": True, "title": row.title, "message": "已經投咗，skip"})
+                elif _dup_key_of(row) and _dup_key_of(row) in batch_dup_keys:
+                    first = batch_dup_keys[_dup_key_of(row)]
+                    entry.update({"ok": True, "title": row.title,
+                                  "message": f"⚠ 同「#{first}」係同一份工（同公司同職位），"
+                                             f"已經／即將投過，唔會重複交。"})
+                elif _dup_key_of(row) and _dup_key_of(row) in _applied_dup_keys(db, row):
+                    entry.update({"ok": True, "title": row.title,
+                                  "message": "⚠ 同一份工（同公司同職位）已經投過，唔會重複交。"})
                 elif row.apply_method == "external_link":
                     entry.update({"title": row.title, "message": "外部網站，唔自動投（俾 link 你）"})
                 else:
                     entry["title"] = row.title
+                    _sync_jd_language(db, row)
                     # ensure a CL exists (generate on the fly if possible)
                     cl_text = ""
                     latest = (db.query(CoverLetter).filter_by(application_id=row.id)
@@ -283,6 +302,43 @@ async def _run_batch(ids: list[int], auto: bool | None) -> None:
     finally:
         _batch_state["running"] = False
         db.close()
+
+
+def _sync_jd_language(db: Session, row: JobApplication) -> None:
+    """申請前按 JD／標題重新校正 jd_language（決定交中文定英文 CV／intro）。
+
+    舊資料好多都錯標（例如中文 JD 標成 en），所以每次投遞前校正一次並寫返 DB。
+    """
+    from ..services.language import detect_language
+
+    text = (row.jd_text or "").strip() or (row.title or "")
+    correct = detect_language(text)
+    if correct and row.jd_language != correct:
+        log.info("修正 jd_language：job #%s %r（%s -> %s）",
+                 row.id, (row.title or "")[:30], row.jd_language, correct)
+        row.jd_language = correct
+        db.commit()
+
+
+def _dup_key_of(row: JobApplication) -> str:
+    """dup_key（同公司同職位）；空白就即場計（舊資料好多都冇填）。"""
+    key = (row.dup_key or "").strip()
+    if not key and row.company and row.title:
+        key = make_dup_key(row.company, row.title)
+    return key
+
+
+def _applied_dup_keys(db: Session, row: JobApplication) -> set[str]:
+    """同公司同職位（dup_key）而且已經投過嘅工 -- 用嚟擋跨平台重複投遞。"""
+    key = _dup_key_of(row)
+    if not key:
+        return set()
+    hit = (db.query(JobApplication.id)
+           .filter(JobApplication.dup_key == key,
+                   JobApplication.status == "applied",
+                   JobApplication.id != row.id)
+           .first())
+    return {key} if hit else set()
 
 
 @router.post("/batch-apply")
@@ -418,7 +474,8 @@ async def refresh_job(job_id: int, db: Session = Depends(get_db)):
             max_age = settings.MAX_JOB_AGE_DAYS
             if max_age > 0 and not is_fresh(draft.posted_at, max_age):
                 # 手動 refresh：唔刪你撳緊嗰份工，改為標記過期（隱藏出主頁）
-                row.status = "low_match"
+                if row.status != "applied":
+                    row.status = "low_match"
                 row.match_reason = f"刊登日期已超過 {max_age} 日，已過期"
                 db.commit()
                 db.refresh(row)
@@ -436,7 +493,9 @@ async def refresh_job(job_id: int, db: Session = Depends(get_db)):
     row.match_reason = reason
     if row.company and row.title:
         row.dup_key = make_dup_key(row.company, row.title)
-    row.status = "pending_review" if score >= settings.MATCH_THRESHOLD else "low_match"
+    # 已投遞嘅工唔可以因為 refresh 而變返未投（否則會被重複投遞）。
+    if row.status != "applied":
+        row.status = "pending_review" if score >= settings.MATCH_THRESHOLD else "low_match"
 
     if score >= settings.MATCH_THRESHOLD:
         try:
@@ -509,8 +568,13 @@ def email_preview(job_id: int, template: str = "standard", db: Session = Depends
         raise HTTPException(status_code=400, detail="呢份工冇聯絡 email，唔可以用 email 申請")
     latest = (db.query(CoverLetter).filter_by(application_id=row.id)
               .order_by(CoverLetter.version.desc()).first())
-    from ..services.cv_loader import resolve_cv_path
-    cv_path = resolve_cv_path(row.jd_language) or resolve_cv_path("zh" if row.jd_language == "en" else "en")
+    _sync_jd_language(db, row)
+    from ..services.cv_loader import resolve_cv_for_job, resolve_cv_path
+    # 同實際發送一致：用版本階梯（AI -> Full-stack -> Developer -> 通用）
+    cv_path, _variant = resolve_cv_for_job(row.title, row.jd_language)
+    if not cv_path:
+        cv_path = resolve_cv_path(row.jd_language) or resolve_cv_path(
+            "zh" if row.jd_language == "en" else "en")
     email = build_email(row, latest.content if latest else "", cv_path, template)
     return EmailPreview(
         to=email["to"], contact_person=row.contact_person,
@@ -543,12 +607,22 @@ async def start_apply(job_id: int, payload: ApplyIn | None = None, db: Session =
     )
     template = payload.template if (payload and payload.template) else "standard"
 
+    # 語言校正（會影響揀邊個語言版本嘅 CV／自我介紹）
+    _sync_jd_language(db, row)
+
+    # 跨平台重複提醒：同一份工（同公司同職位）可能已經投過另一行
+    dup_warn = ""
+    if _dup_key_of(row) in _applied_dup_keys(db, row):
+        dup_warn = "⚠ 注意：同一份工（同公司同職位）已經喺另一個平台行投過。"
+
     result = await open_apply(row, cl_text, auto=auto, template_key=template)
     if result.get("submitted"):
         row.status = "applied"
         row.applied_at = row.applied_at or utcnow()
         db.commit()
         result["job_id"] = row.id
+    if dup_warn:
+        result["message"] = f"{result.get('message', '')} {dup_warn}".strip()
     return result
 
 
