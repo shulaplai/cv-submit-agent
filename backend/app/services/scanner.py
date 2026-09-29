@@ -508,6 +508,8 @@ async def run_scan(db: Session, progress: dict | None = None,
             逐份撳「🔄 更新 JD」。
             """
             async with sem:
+                if scan_control.stop_requested():
+                    return          # 用戶撳咗暫停：唔好再開新頁（暫停要即刻有效）
                 for attempt in range(1, attempts + 1):
                     try:
                         if await _fill_detail(db, row, _fetch_detail_for(row.platform), pace=pace):
@@ -568,6 +570,13 @@ async def run_scan(db: Session, progress: dict | None = None,
                 summary.enriched += 1
             if cheap_rows:
                 db.flush()
+            if scan_control.stop_requested():
+                # 用戶要求「撳暫停就要即刻停」：JD 階段未完都唔好再等，
+                # 已攞到嘅 JD 即刻 commit（唔會白做），LLM 評分／CL 全部跳過。
+                summary.stopped = True
+                db.commit()
+                log.info("scan stop requested during JD phase — 已攞到嘅 JD 已入庫，"
+                         "跳過 LLM 評分／生成 CL")
             if dropped_ids:
                 summary.new_jobs = max(0, summary.new_jobs - len(dropped_ids))
                 for tname, n in dropped_by_track.items():
@@ -585,6 +594,8 @@ async def run_scan(db: Session, progress: dict | None = None,
 
         async def enrich(row: JobApplication, platform: str, fetch_detail, kind: str) -> None:
             async with sem:
+                if scan_control.stop_requested():
+                    return          # 用戶撳咗暫停：唔好再洗 LLM 評分／CL
                 try:
                     set_progress(platform, f"enriching ({kind})", row.title[:40])
                     dropped = await _enrich_one(db, row, platform, fetch_detail, skills, pace=pace)
