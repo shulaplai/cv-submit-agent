@@ -233,6 +233,11 @@ def classify(title: str, it_keywords: list[str] | None = None,
     return "it"
 
 
+# 「搵唔到優先工就唔好再揭頁」嘅容忍度：軟上限用盡之後，如果連續咁多個候選
+# 都唔係優先工（AI 相關／高分），就當呢個渠道冇貨，收手（免得住死揭 30 頁）。
+PRIORITY_SCAN_SLACK = 60
+
+
 @dataclass
 class TrackConfig:
     """Per-track scan settings passed down to the scrapers.
@@ -252,18 +257,38 @@ class TrackConfig:
     non_it_keywords: list[str] = field(default_factory=list)  # 唔當 IT 嘅字眼
     # 一般 track：「想去嘅地點」白名單 — 只收寫得明確又喺名單內嘅工。空 = 唔篩。
     wanted_locations: list[str] = field(default_factory=list)
+    # ---- 高分豁免上限（用戶要求）----
+    # 開啟後：命中 priority_keywords 或者 keyword pre-score >= cap_bypass_min_score
+    # 嘅工唔計入軟上限（govhk_max_jobs / offertoday_max_per_search /
+    # MAX_SCAN_JOBS），照樣入庫；每渠道最多豁免 priority_extra_max 份。
+    cap_bypass_enabled: bool = False
+    cap_bypass_min_score: int = 70
+    priority_keywords: list[str] = field(default_factory=list)
+    priority_extra_max: int = 50
+    hard_cap: int = 0         # 每渠道硬上限（0 = 用內建：gov.hk 30 頁／OfferToday 12 scroll）
 
     @staticmethod
     def defaults(name: str) -> "TrackConfig":
         """Track config from pure settings/env — used when no Profile row exists."""
+        from .tuning import load_tuning
+        from .tuning import priority_keywords as _priority_kws
+
         it_kws = resolve_it_keywords()
         non_it = resolve_non_it_keywords()
+        t = load_tuning()
+        bypass = dict(
+            cap_bypass_enabled=t.cap_bypass_enabled,
+            cap_bypass_min_score=t.cap_bypass_min_score,
+            priority_keywords=_priority_kws(t),
+            priority_extra_max=t.priority_extra_max,
+        )
         if name == "it":
             return TrackConfig(
                 name="it", label="IT",
                 keywords=it_kws, it_keywords=it_kws, non_it_keywords=non_it,
                 govhk_max_jobs=settings.GOVHK_IT_MAX_JOBS,
                 offertoday_max_per_search=settings.OFFERTODAY_MAX_PER_SEARCH,
+                **bypass,
             )
         general_kws = resolve_general_keywords()
         return TrackConfig(
@@ -276,4 +301,35 @@ class TrackConfig:
                 parse_keywords(settings.OFFERTODAY_GENERAL_SEARCH_TERMS) or general_kws
             ),
             max_searches=settings.OFFERTODAY_GENERAL_MAX_SEARCHES,
+            **bypass,
         )
+
+
+def is_priority_job(title: str, extra_text: str = "", skills: list[str] | None = None,
+                    cfg: "TrackConfig | None" = None,
+                    min_score: int | None = None,
+                    keywords: list[str] | None = None) -> bool:
+    """True = 呢份工係「高分／優先」，唔應該被數量上限擋走（用戶要求）。
+
+    判斷喺 list 階段做（標題 + 卡片文字 + 技能清單）——**零 LLM 成本**：
+      1. 標題命中優先字詞（預設 = AI 職位關鍵字；用戶可喺設定頁加）
+      2. 或者 keyword pre-score >= 門檻（預設 70）
+    冇配置（cfg=None 又冇 keywords）就一律回 False（＝舊行為）。
+    """
+    kws = list(keywords or [])
+    if cfg is not None:
+        if not cfg.cap_bypass_enabled:
+            return False
+        kws = kws or list(cfg.priority_keywords or [])
+        threshold = cfg.cap_bypass_min_score if min_score is None else min_score
+    else:
+        if min_score is None:
+            return bool(kws) and title_matches(title, kws)
+        threshold = min_score
+    if kws and title_matches(title, kws):
+        return True
+    # 標題唔中，就睇技能重疊分（唔用 JD，避免要開詳情頁）
+    from .matcher import keyword_score  # lazy: avoid import cycle at module load
+
+    return keyword_score(title, extra_text, skills) >= max(1, int(threshold))
+

@@ -12,7 +12,11 @@ export function History() {
   const load = useCallback(async () => {
     try {
       const r = await api.listJobs({
-        status: tab === "applied" ? "applied" : undefined,
+        // 已投遞 tab 連「面試中／冇回音／落選／Offer」一齊睇（全部都係投過嘅工）
+        status:
+          tab === "applied"
+            ? "applied,interviewing,no_response,rejected,offer"
+            : undefined,
         show_all: tab === "all",
         limit: 500,
       });

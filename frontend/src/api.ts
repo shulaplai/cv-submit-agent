@@ -69,9 +69,14 @@ export const api = {
       body: JSON.stringify({ track: track || "all", channels: channels || [] }),
     }),
   stopScan: () => req<{ stopped: boolean; message: string }>("/api/scan/stop", { method: "POST" }),
-  backfill: () => req<{ started: boolean; message: string }>("/api/scan/backfill", { method: "POST" }),
+  backfill: (opts?: { limit?: number; scope?: "oldest" | "it_unscored" }) =>
+    req<{ started: boolean; message: string; scope?: string; limit?: number }>(
+      "/api/scan/backfill",
+      { method: "POST", body: JSON.stringify(opts || {}) }
+    ),
   stats: () => req<Stats>("/api/stats"),
   profile: () => req<Profile>("/api/profile"),
+  tuning: () => req<Record<string, unknown>>("/api/profile/tuning"),
   saveProfile: (p: Record<string, unknown>) =>
     req<Profile>("/api/profile", { method: "PUT", body: JSON.stringify(p) }),
   testLLM: () => req<{ ok: boolean; latency_ms: number; model: string; error: string }>(

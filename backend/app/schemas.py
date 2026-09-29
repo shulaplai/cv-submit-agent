@@ -36,6 +36,13 @@ class JobApplicationOut(BaseModel):
     match_score: int
     match_reason: str
     job_summary: str = ""
+    # ---- fit 標籤（職位台篩選 chip 用）----
+    ai_match: bool = False
+    is_contract: bool = False
+    is_agency: bool = False
+    match_level: str = ""          # "" | under | fit | over
+    # 申請時會交邊份 CV（AI 版／Full-stack 版／Developer 版／通用版）
+    cv_variant: str = ""
     apply_method: str
     contact_email: str
     contact_person: str
@@ -43,6 +50,9 @@ class JobApplicationOut(BaseModel):
     applied_at: Optional[datetime] = None
     interview_stage: str
     notes: str
+    # ---- 發送前 AI 潤色成品（可喺詳情頁睇返）----
+    offertoday_intro_polished: str = ""
+    email_polished_at: Optional[datetime] = None
     dup_key: str = ""
     dup_count: int = 0
     created_at: datetime
@@ -63,7 +73,9 @@ class EmailPreview(BaseModel):
     contact_person: str
     subject: str
     body: str
-    attachment: str
+    # 潤色狀態：polished=True 表示 body 係 AI 潤色版；body_original 係未潤色版
+    polished: bool = False
+    body_original: str = ""
 
 
 class UpdateApplicationIn(BaseModel):
@@ -125,6 +137,35 @@ class ProfileIn(BaseModel):
     govhk_general_max_jobs: Optional[int] = None
     offertoday_it_max_per_search: Optional[int] = None
     offertoday_general_max_per_search: Optional[int] = None
+    # ---- 掃描量（每個 track／搜尋頁開幾多）----
+    offertoday_it_max_searches: Optional[int] = None
+    offertoday_general_max_searches: Optional[int] = None
+    max_scan_jobs: Optional[int] = None
+    # ---- 高分豁免上限 ----
+    cap_bypass_enabled: Optional[bool] = None
+    cap_bypass_min_score: Optional[int] = None
+    priority_keywords: Optional[str] = None
+    priority_extra_max: Optional[int] = None
+    # ---- LLM 預算 ----
+    max_enrich_per_scan: Optional[int] = None
+    enrich_all_it: Optional[bool] = None
+    max_enrich_it_per_scan: Optional[int] = None
+    enrich_general_jobs: Optional[bool] = None
+    # ---- 掃描節奏 ----
+    scan_job_delay_min_seconds: Optional[float] = None
+    scan_job_delay_max_seconds: Optional[float] = None
+    scan_hour: Optional[int] = None
+    scan_day_interval: Optional[int] = None
+    # ---- 求職者資歷 ----
+    years_experience: Optional[int] = None
+    prefer_ai: Optional[bool] = None
+    avoid_contract: Optional[bool] = None
+    avoid_agency: Optional[bool] = None
+    # ---- 發送前 AI 潤色 ----
+    email_polish_enabled: Optional[bool] = None
+    email_polish_instructions: Optional[str] = None
+    intro_polish_enabled: Optional[bool] = None
+    intro_polish_instructions: Optional[str] = None
 
 
 class ProfileOut(BaseModel):
@@ -173,6 +214,35 @@ class ProfileOut(BaseModel):
     govhk_general_max_jobs: int
     offertoday_it_max_per_search: int
     offertoday_general_max_per_search: int
+    # ---- 掃描量 ----
+    offertoday_it_max_searches: int = 0
+    offertoday_general_max_searches: int = 0
+    max_scan_jobs: int = 0
+    # ---- 高分豁免上限 ----
+    cap_bypass_enabled: bool = True
+    cap_bypass_min_score: int = 0
+    priority_keywords: str = ""
+    priority_extra_max: int = 0
+    # ---- LLM 預算 ----
+    max_enrich_per_scan: int = -1
+    enrich_all_it: bool = True
+    max_enrich_it_per_scan: int = -1
+    enrich_general_jobs: bool = False
+    # ---- 掃描節奏 ----
+    scan_job_delay_min_seconds: float = 0.0
+    scan_job_delay_max_seconds: float = 0.0
+    scan_hour: int = -1
+    scan_day_interval: int = -1
+    # ---- 求職者資歷 ----
+    years_experience: int = 0
+    prefer_ai: bool = True
+    avoid_contract: bool = False
+    avoid_agency: bool = False
+    # ---- 發送前 AI 潤色 ----
+    email_polish_enabled: bool = True
+    email_polish_instructions: str = ""
+    intro_polish_enabled: bool = True
+    intro_polish_instructions: str = ""
     updated_at: datetime
 
 
@@ -181,6 +251,20 @@ class ScanResult(BaseModel):
     new_jobs: int
     skipped_duplicates: int
     errors: list[str] = []
+
+
+class FunnelRow(BaseModel):
+    """漏斗一行：某個分組（track／AI／分數段）嘅投遞結果。"""
+    key: str
+    label: str
+    applied: int = 0
+    responded: int = 0      # 有回覆（面試中／落選／offer）
+    interviewing: int = 0
+    rejected: int = 0
+    no_response: int = 0
+    offer: int = 0
+    pending: int = 0        # 已投但仲未有記錄
+    response_rate: float = 0.0
 
 
 class StatsOut(BaseModel):
@@ -192,3 +276,8 @@ class StatsOut(BaseModel):
     weekly_applied: list[dict]  # [{week: str, count: int}]
     weekly_goal: int
     applied_this_week: int
+    # 結果漏斗：按 track／AI／分數段分組（用戶用數據決定邊類工值得投）
+    funnel: list[FunnelRow] = []
+    funnel_by_category: list[FunnelRow] = []
+    funnel_by_ai: list[FunnelRow] = []
+    funnel_by_score: list[FunnelRow] = []

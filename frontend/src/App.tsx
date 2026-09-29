@@ -200,6 +200,14 @@ export default function App() {
                     上限已滿，另有 {scan.last.capped} 份等下次 scan
                   </>
                 )}
+                {(scan.last.priority_kept ?? 0) > 0 && (
+                  <>
+                    <br />
+                    <b className="ok">✦ 高分豁免：收多 {scan.last.priority_kept} 份</b>
+                    {(scan.last.priority_capped ?? 0) > 0 &&
+                      `（另有 ${scan.last.priority_capped} 份豁免額滿）`}
+                  </>
+                )}
                 {scan.last.backfilled > 0 && (
                   <>
                     <br />

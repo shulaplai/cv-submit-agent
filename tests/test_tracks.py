@@ -353,7 +353,7 @@ def test_run_scan_fetches_detail_for_all_new_rows(db, monkeypatch):
         return object()
 
     async def fake_score_job(job_dict, skills):
-        return (30, "低分")
+        return (30, "低分", "")
 
     monkeypatch.setattr(scanner, "PLATFORM_SCRAPERS",
                         (("offertoday", fake_scrape, fake_fetch_detail),))
@@ -404,12 +404,18 @@ def test_run_scan_enriches_all_it_rows(db, monkeypatch):
         return object()
 
     async def fake_score_job(job_dict, skills):
-        return (30, "低分")
+        return (30, "低分", "")
 
     monkeypatch.setattr(scanner, "PLATFORM_SCRAPERS",
                         (("offertoday", fake_scrape, fake_fetch_detail),))
     monkeypatch.setattr(scanner, "get_browser", fake_get_browser)
     monkeypatch.setattr(scanner, "score_job", fake_score_job)
+    # 一般工預設唔入 LLM（用戶要求「只有 IT 工需要評分」）；呢個測試要驗
+    # 「一般工維持 top-N 預算」，所以明確開返（見 tests/test_general_scoring.py）
+    from app.models import Profile
+
+    db.add(Profile(id=1, enrich_general_jobs=True))
+    db.commit()
 
     summary = asyncio.run(scanner.run_scan(db, {}, track="it"))
 

@@ -590,6 +590,22 @@ input.num-input:focus { border-color: var(--accent); }
 .status-chip.rejected, .status-chip.failed { border-color: var(--accent); color: var(--accent-deep); background: rgba(217, 59, 38, 0.08); }
 .status-chip.needs_manual_intervention { border-color: var(--accent); color: var(--accent-deep); border-style: dashed; }
 .status-chip.low_match { opacity: 0.55; }
+.status-chip.no_response { border-color: var(--ink-soft); color: var(--ink-soft); background: rgba(0, 0, 0, 0.04); }
+
+/* fit chip：AI／合約／外派／資歷（職位卡用） */
+.chip {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  color: var(--ink-soft);
+  white-space: nowrap;
+  background: transparent;
+}
+.chip.ok { border-color: var(--teal); color: var(--teal); background: rgba(15, 111, 104, 0.08); }
+.chip.low { border-color: var(--accent); color: var(--accent-deep); background: rgba(217, 59, 38, 0.06); }
 
 /* buttons */
 .btn {

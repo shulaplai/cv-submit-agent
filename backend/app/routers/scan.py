@@ -64,6 +64,8 @@ async def _scan_job(track: str | None = None, channels: list[str] | None = None)
             "backfilled": summary.backfilled,
             "low_match": summary.low_match,
             "details_fetched": summary.details_fetched,
+            "priority_kept": summary.priority_kept,
+            "priority_capped": summary.priority_capped,
             "stopped": summary.stopped,
             "errors": summary.errors,
             "tracks": summary.tracks,
@@ -81,25 +83,42 @@ async def _scan_job(track: str | None = None, channels: list[str] | None = None)
         db.close()
 
 
-async def _backfill_job():
-    """Enrich up to BACKFILL_LIMIT oldest un-enriched rows right now."""
+async def _backfill_job(limit: int = BACKFILL_LIMIT, scope: str = "oldest"):
+    """Enrich up to `limit` rows right now.
+
+    ``scope="oldest"``      = 最舊未補嘅記錄（原本行為）
+    ``scope="it_unscored"`` = 未評分嘅 IT 工（match_score = 0）—— 用戶要求：
+    舊資料有 173 份 IT 工從來冇入過 LLM，分數永遠 0、排序永遠沉底；一撳分批補返。
+    """
+    from ..services.cv_loader import load_skills
+    from ..services.scanner import unscored_it_candidates
+
     db: Session = SessionLocal()
     try:
         progress = _state["progress"]
         progress.update({"platform": "backfill", "phase": "running", "count": 0})
-        rows = _backfill_candidates(db, BACKFILL_LIMIT)
+        rows = (unscored_it_candidates(db, limit) if scope == "it_unscored"
+                else _backfill_candidates(db, limit))
+        skills = load_skills()
         done = 0
         for row in rows:
+            if scan_control.stop_requested():
+                break
             progress["count"] = done + 1
-            await _enrich_one(db, row, row.platform, _fetch_detail_for(row.platform), [])
+            progress["platform"] = row.platform
+            await _enrich_one(db, row, row.platform, _fetch_detail_for(row.platform), skills)
             done += 1
         db.commit()
-        _state["last_backfill"] = {"at": datetime.now(timezone.utc).isoformat(), "processed": done}
+        left = len(unscored_it_candidates(db, 10_000)) if scope == "it_unscored" else 0
+        _state["last_backfill"] = {"at": datetime.now(timezone.utc).isoformat(),
+                                   "processed": done, "scope": scope, "left": left}
         progress.update({"platform": "", "phase": "done", "count": 0})
     except Exception as e:  # noqa: BLE001
         log.exception("backfill crashed")
         _state["last_error"] = f"backfill: {e}"
     finally:
+        _state["running"] = False
+        scan_control.clear_stop()
         db.close()
 
 
@@ -214,13 +233,32 @@ async def start_backfill_jd(payload: dict | None = None):
 
 
 @router.post("/backfill")
-async def start_backfill():
+async def start_backfill(payload: dict | None = None):
+    """即刻補齊（會用 LLM）。
+
+    body 可以係 `{"limit": 30, "scope": "it_unscored"}`：
+      - scope="oldest"（預設）= 最舊未處理記錄，每次 10 份
+      - scope="it_unscored" = 未評分（match_score=0）嘅 IT 工，每次 30 份
+        —— 用戶要求：一撳補返嗰 173 份從來冇評分嘅 IT 工。
+    """
     if _state["running"]:
         return {"started": False, "message": "scan 已經喺度行緊，等佢完先"}
+    body = payload or {}
+    scope = str(body.get("scope") or "oldest")
+    if scope not in ("oldest", "it_unscored"):
+        raise HTTPException(status_code=400, detail="scope 必須係 oldest 或 it_unscored")
+    default_limit = 30 if scope == "it_unscored" else BACKFILL_LIMIT
+    limit = int(body.get("limit") or default_limit)
+    limit = max(1, min(limit, 200))
+    scan_control.clear_stop()
     _state["running"] = True
     _state["last_error"] = None
-    asyncio.create_task(_backfill_job())
-    return {"started": True, "message": "補齊已開始（最多 10 份最舊未處理記錄）"}
+    asyncio.create_task(_backfill_job(limit, scope))
+    if scope == "it_unscored":
+        return {"started": True, "limit": limit, "scope": scope,
+                "message": f"開始補齊未評分 IT 工（最多 {limit} 份，會用 LLM 評分＋生成 CL）"}
+    return {"started": True, "limit": limit, "scope": scope,
+            "message": f"補齊已開始（最多 {limit} 份最舊未處理記錄）"}
 
 
 def _last_scan_path() -> Path:

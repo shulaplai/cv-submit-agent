@@ -15,7 +15,8 @@ import logging
 import re
 from urllib.parse import quote, urljoin
 
-from .classify import TrackConfig, classify, title_matches
+from .classify import (PRIORITY_SCAN_SLACK, TrackConfig, classify, is_priority_job,
+                       title_matches)
 from .scraper_base import BrowserSession, JobDraft, human_delay, open_page
 from . import scan_control
 
@@ -65,9 +66,16 @@ async def scrape(session: BrowserSession, track: str = "it",
     IT track: the three tech category pages, keeping keyword-matching titles.
     general track: one search page per keyword term, keeping titles that match
     the general keywords and are NOT IT-classified.
-    Each search page contributes at most cfg.offertoday_max_per_search drafts.
+
+    Soft cap: each search page contributes at most
+    ``cfg.offertoday_max_per_search`` **非優先** drafts. 用戶要求：評級好高嘅工
+    （標題命中優先字詞／pre-score 夠高）唔受上限限制，額外最多收
+    ``cfg.priority_extra_max`` 份（豁免硬上限，防止失控）。
     """
     cfg = cfg or TrackConfig.defaults(track)
+    from .cv_loader import load_skills
+
+    skills = load_skills()
     drafts: list[JobDraft] = []
     seen: set[str] = set()
 
@@ -77,14 +85,18 @@ async def scrape(session: BrowserSession, track: str = "it",
             return drafts
         try:
             page = await open_page(session.context, url)
-            # scroll until we have ~2x the per-search cap visible, then stop
+            # scroll far enough to reach the soft cap AND the priority extra
             cap = cfg.offertoday_max_per_search
-            await _scroll_search(page, cap * 2 if cap else 150)
+            extra = cfg.priority_extra_max if cfg.cap_bypass_enabled else 0
+            target = (cap * 2 if cap else 150) + extra
+            await _scroll_search(page, target)
             links = page.locator("a[href*='/hk/job/']")
             n = await links.count()
-            taken = 0
+            taken_normal = 0
+            taken_priority = 0
+            misses = 0
             for i in range(n):
-                if cap and taken >= cap:
+                if cap and taken_normal >= cap and taken_priority >= extra:
                     break
                 if scan_control.stop_requested():
                     log.info("offertoday: stop requested mid-search — returning partial drafts")
@@ -106,10 +118,30 @@ async def scrape(session: BrowserSession, track: str = "it",
                        or not title_matches(title, cfg.keywords):
                         continue
                     category = "general"
-                seen.add(token)
+                if cap and taken_normal >= cap:
+                    # 軟上限已滿：只有「優先工」先值得再開卡片文字睇分（慳時間）；
+                    # 連續 PRIORITY_SCAN_SLACK 個都唔係優先工就當呢頁冇貨。
+                    if not is_priority_job(title, "", skills, cfg):
+                        misses += 1
+                        if misses >= PRIORITY_SCAN_SLACK:
+                            log.info("offertoday %s: %s normal cap reached and no priority "
+                                     "job in the last %s links, moving on",
+                                     url.rsplit("/", 1)[-1], cap, misses)
+                            break
+                        continue
+                # 卡片文字要喺計數之前攞：豁免判斷（優先字詞／技能重疊分）需要佢
                 card_text = (await link.evaluate(
                     "el => { let p = el; for (let i=0;i<3 && p.parentElement;i++) p = p.parentElement; return p.innerText; }"
                 )) if await link.count() else ""
+                priority = bool(is_priority_job(title, card_text, skills, cfg))
+                if priority and taken_priority < extra:
+                    taken_priority += 1
+                elif (not cap) or taken_normal < cap:
+                    taken_normal += 1
+                else:
+                    continue      # 普通額已滿，豁免額又滿 -> 唔收
+                misses = 0
+                seen.add(token)
                 salary = ""
                 m = SALARY_RE.search(card_text)
                 if m:
@@ -124,11 +156,10 @@ async def scrape(session: BrowserSession, track: str = "it",
                     salary_range=salary,
                     jd_text="",
                     category=category,
-                    raw={"card_text": card_text[:500]},
+                    raw={"card_text": card_text[:500], "priority": priority},
                 ))
-                taken += 1
-            log.info("offertoday %s: took %s drafts (cap %s/search)",
-                     url.rsplit("/", 1)[-1], taken, cap)
+            log.info("offertoday %s: took %s normal + %s priority (cap %s + %s/search)",
+                     url.rsplit("/", 1)[-1], taken_normal, taken_priority, cap, extra)
             await page.close()
         except Exception as e:  # noqa: BLE001
             log.warning("offertoday search %s failed: %s", url, e)

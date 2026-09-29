@@ -1,4 +1,6 @@
 """Profile (onboarding) endpoints — single row id=1."""
+import logging
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
@@ -9,6 +11,7 @@ from ..schemas import ProfileIn, ProfileOut
 from ..services import llm as llm_svc
 from ..services.cv_loader import CVError, get_cv_text
 
+log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/profile", tags=["profile"])
 
 
@@ -40,11 +43,55 @@ def update_profile(payload: ProfileIn, db: Session = Depends(get_db)):
     if profile is None:
         profile = Profile(id=1)
         db.add(profile)
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    changed = payload.model_dump(exclude_unset=True)
+    for field, value in changed.items():
         setattr(profile, field, value)
     db.commit()
     db.refresh(profile)
+    # 掃描時間／間隔改咗 -> 即時重建排程（唔使改 .env 重啟）
+    if {"scan_hour", "scan_day_interval"} & set(changed):
+        try:
+            from ..main import reschedule
+
+            reschedule()
+        except Exception as e:  # noqa: BLE001 — 排程重建失敗唔應該令儲存失敗
+            log.warning("reschedule after profile update failed: %s", e)
     return profile
+
+
+@router.get("/tuning")
+def get_tuning(db: Session = Depends(get_db)):
+    """有效掃描／潤色設定（Settings 頁顯示「實際生效」值同估算用）。
+
+    `explicit` = 你喺設定頁明確填過嘅欄位；其餘係 .env 預設。
+    """
+    from ..services.tuning import load_tuning, priority_keywords
+    from ..services.cv_loader import ai_title_keywords
+
+    t = load_tuning(db)
+    profile = db.get(Profile, 1)
+    ttl = profile.cv_ai_title_keywords if profile else ""
+    return {
+        "max_scan_jobs": t.max_scan_jobs,
+        "offertoday_it_max_searches": t.offertoday_it_max_searches,
+        "offertoday_general_max_searches": t.offertoday_general_max_searches,
+        "cap_bypass_enabled": t.cap_bypass_enabled,
+        "cap_bypass_min_score": t.cap_bypass_min_score,
+        "priority_extra_max": t.priority_extra_max,
+        "priority_keywords_effective": priority_keywords(t),
+        "max_enrich_per_scan": t.max_enrich_per_scan,
+        "enrich_all_it": t.enrich_all_it,
+        "max_enrich_it_per_scan": t.max_enrich_it_per_scan,
+        "enrich_general_jobs": t.enrich_general_jobs,
+        "scan_job_delay_min": t.scan_job_delay_min,
+        "scan_job_delay_max": t.scan_job_delay_max,
+        "scan_hour": t.scan_hour,
+        "scan_day_interval": t.scan_day_interval,
+        "email_polish_enabled": t.email_polish_enabled,
+        "intro_polish_enabled": t.intro_polish_enabled,
+        "years_experience": t.years_experience,
+        "ai_title_keywords_default": ai_title_keywords() if not ttl else ai_title_keywords(),
+    }
 
 
 @router.post("/cv", response_model=ProfileOut)

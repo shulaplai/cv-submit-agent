@@ -147,6 +147,35 @@ export function Settings({ pushToast }: { pushToast: (text: string, kind?: "info
         govhk_general_max_jobs: p.govhk_general_max_jobs,
         offertoday_it_max_per_search: p.offertoday_it_max_per_search,
         offertoday_general_max_per_search: p.offertoday_general_max_per_search,
+        // 掃描量
+        offertoday_it_max_searches: p.offertoday_it_max_searches,
+        offertoday_general_max_searches: p.offertoday_general_max_searches,
+        max_scan_jobs: p.max_scan_jobs,
+        // 高分豁免上限
+        cap_bypass_enabled: p.cap_bypass_enabled,
+        cap_bypass_min_score: p.cap_bypass_min_score,
+        priority_keywords: p.priority_keywords,
+        priority_extra_max: p.priority_extra_max,
+        // LLM 預算
+        max_enrich_per_scan: p.max_enrich_per_scan,
+        enrich_all_it: p.enrich_all_it,
+        max_enrich_it_per_scan: p.max_enrich_it_per_scan,
+        enrich_general_jobs: p.enrich_general_jobs,
+        // 節奏
+        scan_job_delay_min_seconds: p.scan_job_delay_min_seconds,
+        scan_job_delay_max_seconds: p.scan_job_delay_max_seconds,
+        scan_hour: p.scan_hour,
+        scan_day_interval: p.scan_day_interval,
+        // 求職者資歷
+        years_experience: p.years_experience,
+        prefer_ai: p.prefer_ai,
+        avoid_contract: p.avoid_contract,
+        avoid_agency: p.avoid_agency,
+        // 發送前 AI 潤色
+        email_polish_enabled: p.email_polish_enabled,
+        email_polish_instructions: p.email_polish_instructions,
+        intro_polish_enabled: p.intro_polish_enabled,
+        intro_polish_instructions: p.intro_polish_instructions,
       });
       setP(updated);
       setSkillsText(updated.skills_json);
@@ -454,6 +483,15 @@ export function Settings({ pushToast }: { pushToast: (text: string, kind?: "info
             </div>
           </div>
         </div>
+        {!(p.cv_ai_en_path || p.cv_ai_zh_path || p.cv_fullstack_en_path
+           || p.cv_fullstack_zh_path || p.cv_developer_en_path || p.cv_developer_zh_path) && (
+          <div className="note-inline err" style={{ borderStyle: "solid" }}>
+            ⚠ 未上載 <b>AI 版／Full-stack 版／Developer 版</b> CV —— 所以所有申請（包括 AI 職位）
+            都會交<b>通用版 CV</b>。想 AI 職位交針對性版本，喺上面「CV 版本」上載
+            AI／Full-stack／Developer 版（檔名例如 <b>..._AI.pdf</b>、<b>..._FullStack.pdf</b>）。
+          </div>
+        )}
+
         <div className="section">
           <h4>掃描與分類（IT / 一般職位）</h4>
           <div className="note-inline" style={{ borderStyle: "solid" }}>
@@ -738,6 +776,313 @@ export function Settings({ pushToast }: { pushToast: (text: string, kind?: "info
             未連接時會用後備方案（獨立 Playwright 瀏覽器，登入一次，session 存本機）。
           </div>
         </div>
+        <div className="section">
+          <h4>掃描量（收幾多工 — 可以加大／唔設限）</h4>
+          <div className="note-inline" style={{ borderStyle: "solid" }}>
+            每個渠道每次掃描收幾多份。數值 <b>0 = 唔設限</b>（用內建硬上限：gov.hk 30 頁／OfferToday
+            每頁 12 次捲動）。撳 <b>+10 / +50</b> 快速加大；改完記得撳下面「儲存設定」。
+          </div>
+          {(
+            [
+              ["govhk_it_max_jobs", "GovHK·資訊及科技界（每次）"],
+              ["govhk_general_max_jobs", "GovHK·一般職位（每次）"],
+              ["offertoday_it_max_per_search", "OfferToday IT（每個搜尋頁）"],
+              ["offertoday_general_max_per_search", "OfferToday 一般（每個搜尋頁）"],
+              ["offertoday_it_max_searches", "OfferToday IT 額外搜尋字詞數"],
+              ["offertoday_general_max_searches", "OfferToday 一般搜尋字詞數"],
+              ["max_scan_jobs", "每個 track 每次掃描總上限（0 = 不限）"],
+            ] as const
+          ).map(([key, label]) => (
+            <div className="field" key={key}>
+              <label>{label}</label>
+              <div className="btnrow" style={{ alignItems: "center" }}>
+                <input
+                  type="number"
+                  min={0}
+                  max={1000}
+                  className="num-input"
+                  style={{ width: 110 }}
+                  value={p[key] as number}
+                  onChange={(e) => set(key, Number(e.target.value))}
+                />
+                <button className="chip-btn" onClick={() => set(key, (p[key] as number) + 10)}>
+                  +10
+                </button>
+                <button className="chip-btn" onClick={() => set(key, (p[key] as number) + 50)}>
+                  +50
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="section">
+          <h4>高分豁免上限（評級高嘅工無視上限照收）</h4>
+          <label className="check-row" style={{ alignItems: "flex-start" }}>
+            <input
+              type="checkbox"
+              style={{ marginTop: 4 }}
+              checked={p.cap_bypass_enabled}
+              onChange={(e) => set("cap_bypass_enabled", e.target.checked)}
+            />
+            <span>
+              <b>開啟</b> — 符合下面條件嘅工唔計入渠道上限，照樣入庫（每渠道另有豁免額）。
+              <br />
+              <span style={{ fontSize: 12, color: "var(--ink-soft)" }}>
+                條件：職位標題命中「優先字詞」（預設 = AI 職位關鍵字，即係 AI／人工智能／機器學習／
+                LLM／大模型…），或者關鍵字重疊分數達到門檻分。
+              </span>
+            </span>
+          </label>
+          <div className="field">
+            <label>豁免門檻分（0-100；關鍵字分數達到就當高分）</label>
+            <input
+              type="number"
+              min={0}
+              max={100}
+              className="num-input"
+              value={p.cap_bypass_min_score}
+              onChange={(e) => set("cap_bypass_min_score", Number(e.target.value))}
+            />
+          </div>
+          <div className="field">
+            <label>優先字詞（逗號分隔；留空 = 只用 AI 職位關鍵字）</label>
+            <textarea
+              rows={2}
+              value={p.priority_keywords}
+              onChange={(e) => set("priority_keywords", e.target.value)}
+              placeholder="full stack, react, laravel, python, 全端…"
+            />
+          </div>
+          <div className="field">
+            <label>每個渠道每次掃描最多豁免幾多份（防失控）</label>
+            <input
+              type="number"
+              min={0}
+              max={300}
+              className="num-input"
+              value={p.priority_extra_max}
+              onChange={(e) => set("priority_extra_max", Number(e.target.value))}
+            />
+            <div className="note-inline">
+              掃描完成後，側邊欄會顯示「豁免收多咗 N 份」。
+            </div>
+          </div>
+        </div>
+
+        <div className="section">
+          <h4>LLM 預算（每份新 IT 工 ≈ 1 次評分 + 1 次 CL）</h4>
+          <div className="field">
+            <label>一般工每次掃描最多評分幾多份（0 = 唔評分）</label>
+            <input
+              type="number"
+              min={0}
+              max={500}
+              className="num-input"
+              value={p.max_enrich_per_scan < 0 ? 30 : p.max_enrich_per_scan}
+              onChange={(e) => set("max_enrich_per_scan", Number(e.target.value))}
+              title="-1 = 跟 .env（預設 30）"
+            />
+          </div>
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={p.enrich_all_it}
+              onChange={(e) => set("enrich_all_it", e.target.checked)}
+            />
+            所有新 IT 工都完整評分（唔限數量）
+          </label>
+          <div className="field">
+            <label>（安全上限）每次掃描最多評分幾多份新 IT 工（0 = 唔限）</label>
+            <input
+              type="number"
+              min={0}
+              max={500}
+              className="num-input"
+              value={p.max_enrich_it_per_scan < 0 ? 0 : p.max_enrich_it_per_scan}
+              onChange={(e) => set("max_enrich_it_per_scan", Number(e.target.value))}
+              title="-1 = 跟 .env；0 = 唔設上限"
+            />
+            <div className="note-inline">
+              收工量加大之後，掃描時間同 LLM 花費會一齊上升；呢個數可以封頂。
+              舊工（未評分嘅）可以用職位台「⇪ 補齊未評分 IT 工」分批補。
+            </div>
+          </div>
+          <label className="check-row" style={{ alignItems: "flex-start" }}>
+            <input
+              type="checkbox"
+              style={{ marginTop: 4 }}
+              checked={p.enrich_general_jobs}
+              onChange={(e) => set("enrich_general_jobs", e.target.checked)}
+            />
+            <span>
+              <b>一般工都要 LLM 評分</b>（預設<b>唔開</b>）
+              <br />
+              <span style={{ fontSize: 12, color: "var(--ink-soft)" }}>
+                唔開：一般工照樣收、照樣有 JD 同 AI／合約／外派標籤，但<b>唔會洗 LLM</b>
+                （唔評分、唔生成 CL、唔寫摘要），卡片會標示「未評分」。
+                想評某一兩份，就喺詳情頁撳「↻ 重新整理」。
+                <br />
+                IT 工永遠都會完整評分（只有 IT 工需要，見上面）。
+              </span>
+            </span>
+          </label>
+        </div>
+
+        <div className="section">
+          <h4>求職者資歷（影響評分同排序）</h4>
+          <div className="field">
+            <label>年資（年）— 評分會扣「要 5 年+/senior」嘅工，標示「資歷超出」</label>
+            <input
+              type="number"
+              min={0}
+              max={40}
+              className="num-input"
+              value={p.years_experience}
+              onChange={(e) => set("years_experience", Number(e.target.value))}
+            />
+          </div>
+          <div className="check-row" style={{ flexWrap: "wrap" }}>
+            <label>
+              <input
+                type="checkbox"
+                checked={p.prefer_ai}
+                onChange={(e) => set("prefer_ai", e.target.checked)}
+              />
+              優先 AI 相關職位
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={p.avoid_contract}
+                onChange={(e) => set("avoid_contract", e.target.checked)}
+              />
+              想避開合約／臨時工
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={p.avoid_agency}
+                onChange={(e) => set("avoid_agency", e.target.checked)}
+              />
+              想避開外派／獵頭
+            </label>
+          </div>
+          <div className="note-inline">
+            呢啲設定會寫入 LLM 評分提示（合約／外派扣分、超出年資扣分），
+            職位台亦可以一撳篩走（chip：「✕ 合約／臨時」「✕ 外派／獵頭」「✓ 資歷啱」）。
+          </div>
+        </div>
+
+        <div className="section">
+          <h4>發送前 AI 潤色（令封信唔似 AI 拼砌）</h4>
+          <label className="check-row" style={{ alignItems: "flex-start" }}>
+            <input
+              type="checkbox"
+              style={{ marginTop: 4 }}
+              checked={p.email_polish_enabled}
+              onChange={(e) => set("email_polish_enabled", e.target.checked)}
+            />
+            <span>
+              <b>Email 申請</b>（gov.hk 等）：寄出前用 AI 潤色<b>整封內文</b>（稱呼同簽名逐字保留，
+              唔會加履歷以外嘅事實）。預覽同實寄係同一份文字，同一封信唔會重複洗 LLM。
+            </span>
+          </label>
+          <div className="field">
+            <label>Email 潤色額外指示（可以留空）</label>
+            <textarea
+              rows={2}
+              value={p.email_polish_instructions}
+              onChange={(e) => set("email_polish_instructions", e.target.value)}
+              placeholder="例如：更正式一點、刪走重複句、唔好太長…"
+            />
+          </div>
+          <label className="check-row" style={{ alignItems: "flex-start" }}>
+            <input
+              type="checkbox"
+              style={{ marginTop: 4 }}
+              checked={p.intro_polish_enabled}
+              onChange={(e) => set("intro_polish_enabled", e.target.checked)}
+            />
+            <span>
+              <b>OfferToday 自我介紹</b>：發完 CV 跟住送出嘅自我介紹，發送前同樣潤色一次
+              （保持 80–120 字、唔加事實）。
+            </span>
+          </label>
+          <div className="field">
+            <label>自我介紹潤色額外指示（可以留空）</label>
+            <textarea
+              rows={2}
+              value={p.intro_polish_instructions}
+              onChange={(e) => set("intro_polish_instructions", e.target.value)}
+              placeholder="例如：再簡潔一點、唔好超過 90 字…"
+            />
+          </div>
+          <div className="note-inline">
+            潤色失敗（API 出錯／輸出唔合格）一律用原文寄出，唔會漏寄。
+          </div>
+        </div>
+
+        <div className="section">
+          <h4>掃描節奏（太密會被網站擋）</h4>
+          <div className="check-row">
+            <div className="field" style={{ marginBottom: 0 }}>
+              <label>每份工之間最少隔幾秒</label>
+              <input
+                type="number"
+                min={0}
+                max={60}
+                step={0.5}
+                className="num-input"
+                value={p.scan_job_delay_min_seconds || 0}
+                onChange={(e) => set("scan_job_delay_min_seconds", Number(e.target.value))}
+              />
+            </div>
+            <div className="field" style={{ marginBottom: 0 }}>
+              <label>最多隔幾秒</label>
+              <input
+                type="number"
+                min={0}
+                max={60}
+                step={0.5}
+                className="num-input"
+                value={p.scan_job_delay_max_seconds || 0}
+                onChange={(e) => set("scan_job_delay_max_seconds", Number(e.target.value))}
+              />
+            </div>
+          </div>
+          <div className="note-inline">
+            0 = 跟 .env 預設（4–6 秒隨機，避免被 anti-bot 擋）。收工量加大之後，呢個間隔就係掃描時間嘅主因。
+          </div>
+          <div className="check-row">
+            <div className="field" style={{ marginBottom: 0 }}>
+              <label>自動掃描時間（0-23 時）</label>
+              <input
+                type="number"
+                min={0}
+                max={23}
+                className="num-input"
+                value={p.scan_hour < 0 ? 3 : p.scan_hour}
+                onChange={(e) => set("scan_hour", Number(e.target.value))}
+                title="-1 = 跟 .env（預設 03:00）"
+              />
+            </div>
+            <div className="field" style={{ marginBottom: 0 }}>
+              <label>幾多日掃一次（0 = 唔自動掃）</label>
+              <input
+                type="number"
+                min={0}
+                max={30}
+                className="num-input"
+                value={p.scan_day_interval < 0 ? 2 : p.scan_day_interval}
+                onChange={(e) => set("scan_day_interval", Number(e.target.value))}
+                title="-1 = 跟 .env（預設每 2 日）"
+              />
+            </div>
+          </div>
+          <div className="note-inline">改完儲存即刻重建排程（唔使改 .env 重啟）。</div>
+        </div>
+
         <div className="section">
           <h4>申請行為</h4>
           <label className="check-row" style={{ alignItems: "flex-start" }}>

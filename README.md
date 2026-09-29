@@ -6,10 +6,17 @@
 
 ## 功能
 
+- ✦ **AI 職位優先 + 「今日精選」（搵更適合自己嘅工）**：職位台 IT 頁預設排序係「**AI 優先 → 高分 → 新鮮**」（`sort=focus`），chip 一撳即篩「**✦ AI 職位**」（標題或 JD 提到 AI／人工智能／機器學習／LLM／大模型…）。Dashboard 頂有「**今日精選**」（AI 優先、≥65 分、CL 已備嘅 Top 5），可以一撳「一次過投遞」。另外每個渠道實收份數有得加大（設定頁 **+10／+50**，0 = 唔設限），版面側邊欄會顯示「**高分豁免：收多 N 份**」。
+- 🧭 **資歷／穩定度判斷（3 年經驗級別）**：設定頁填年份之後，LLM 評分會扣「要 5 年+/senior/lead」嘅工（標示 **資歷超出**）、扣合約／外派／獵頭（EA）工，並且知道 IT 支援／helpdesk／data center／solution／pre-sales／BA 唔應該當唔啱。職位台有 chip：**✕ 合約／臨時**、**✕ 外派／獵頭**、**✓ 資歷啱**；卡片亦會標示「會交：通用版／AI 版 CV」。
+- ⚡ **高分豁免上限**：用戶要求「評級好高嘅工無視數量限制」——標題命中優先字詞（預設 = AI 職位關鍵字，可自訂）或者關鍵字分數達門檻（預設 70 分）嘅工**唔計入渠道／track 軟上限**照樣入庫，每渠道另有豁免額（預設 50 份）防止失控。豁免判斷喺列表階段做（標題 + 卡片文字 + 技能清單），**零 LLM 成本**；軟上限用盡後唔會再為普通工開詳情頁（連續 60 個都唔係優先工就收手）。
+- ✨ **發送前 AI 潤色（email 內文 + OfferToday 自我介紹）**：寄 gov.hk email 之前，會將**整封內文**（稱呼 + 自我介紹 + 求職信 + 結尾 + 簽名）潤色一次：順句、刪重複（自我介紹同 CL 成日重複講同一件事）、廣東話口語改書面語；**稱呼同簽名逐字保留、唔可以加履歷以外嘅事實**。職位詳情頁嘅「Email 預覽」同實寄係**同一份文字**（有「✨ 內文已 AI 潤色 / 睇原文」切換），同一封信（同一 CL 版本 + 模板）唔會重複洗 LLM。OfferToday 發完 CV 跟住嗰段自我介紹，發送前同樣潤色（保持 80–120 字）。潤色失敗一律用原文寄出，唔會漏寄。
+- 📊 **結果漏斗（用數據決定邊類工值得投）**：詳情頁可以一撳記錄結果（**面試中／冇回音／落選／Offer**），統計頁有漏斗表：IT vs 一般、AI vs 非 AI、按匹配度（≥65 / 50-64 / <50）嘅 已投／有回覆／面試／冇回音／落選／Offer／未更新 + **回覆率**。
+- ⇪ **補齊未評分 IT 工**：舊資料有好多 IT 工從來冇入過 LLM（分數 0，排序永遠沉底）。職位台一撳「⇪ 補齊未評分 IT 工」就會分批（每次 30 份）評分 + 生成 CL。
 - 🕷️ **雙軌掃描（IT / 一般職位）**：每份工分類入 **IT**（AI／程式／技術）或 **一般**（文職、行政、客戶服務等非 IT）track，職位台分「**IT 職位**」同「**一般職位**」兩頁顯示。側邊欄「立即掃描」預設掃晒兩個 track（設定頁可逐個開關），亦可以揀「**淨掃描：IT**」或「**淨掃描：一般**」。每次掃描喺側邊欄分開顯示兩個 track 嘅結果（新/掃到/過期）
   - **IT track**：OfferToday 三個技術分類（資訊科技／工程師／科技，每分類每次上限可設）、gov.hk **大灣區青年就業計劃**（`govhk_gbayes`，刊登日期限 30 日）＋**資訊及科技界**（`govhk_it`，每次上限可設）
   - **一般 track**：OfferToday 關鍵字搜尋（`<關鍵字>-jobs`，每個字詞一個搜尋頁）、gov.hk **主 quickview**（`govhk_general`，全部職位類別，由新到舊，過濾一般關鍵字）
   - **每 2 日凌晨 03:00（香港時間）自動掃描**（`.env` 可改：`SCAN_HOUR` / `SCAN_DAY_INTERVAL`），起機唔會自動補掃；掃描期間每份工（攞 JD／LLM 評分）之間**隨機隔 4–6 秒**（`SCAN_JOB_DELAY_MIN_SECONDS` / `SCAN_JOB_DELAY_MAX_SECONDS`），避免太快被 OfferToday 等網站擋
+- 💸 **只有 IT 工洗 LLM 評分（用戶要求）**：新工入庫時**所有**工都會攞到 JD（唔用 LLM）＋ AI／合約／外派標籤（純關鍵字），但 **LLM 評分／生成 CL／寫摘要只會做 IT 工**；一般工只落關鍵字重疊分（卡片標示「未評分」，照樣顯示喺一般頁）。想評某一兩份就喺詳情頁撳「↻ 重新整理」；想全部評分就去設定頁開「一般工都要 LLM 評分」。詳情：`ENRICH_GENERAL_JOBS`（預設 `false`）。
 - 📅 **OfferToday 都有刊登日期喇**：OfferToday 詳情頁內嵌 JSON-LD（`datePosted`），`fetch_detail` 會抽返出嚟做刊登日期，過期（超過期限）嘅 OfferToday 工一樣會喺補齊/刷新後被過濾
 - 🗂️ **CV 版本自動揀（AI／Full-stack／Developer）**：申請時按**職位標題**揀版本——標題有 AI 字眼（`CV_AI_TITLE_KEYWORDS`，預設 AI／人工智能／機器學習／LLM／大模型／算法…）→ 交 **AI 版**；冇 AI 版 → **Full-stack 版**；連 Full-stack 都冇 → **Developer 版**；全部都冇 → 通用版（`cv_en` / `cv_zh`）。中英各一份（跟 JD 語言）。設定頁「CV 版本」有 6 個上載位；**OfferToday** 會喺「揀履歷」對話框按檔名（例如 `..._AI.pdf`、`..._FullStack.pdf`、`..._Developer.pdf`）揀返同一版本，CL 同自我介紹都會用返嗰個版本嘅 CV 內容生成。
 - ✍️ **Cover Letter 自動生成**：跟 JD 語言（英文 JD → 英文 CL；中文 JD → 繁中 CL），只可用 CV 事實（唔吹噓），UI 可編輯，每次儲存開新版本（歷史保留）；生成後自動驗證語言/長度，唔啱會重試一次
@@ -75,7 +82,10 @@ backend/app/
     scraper_govhk.py     jobs.gov.hk（大灣區計劃 + 資訊及科技界 + 一般職位 quickview，抽 email/聯絡人）
     scraper_jobsdb.py    JobsDB（SEEK data-automation selectors）
     scraper_offertoday.py OfferToday（分類頁 + 關鍵字搜尋 + JSON-LD datePosted 抽刊登日期）
-    matcher.py           keyword pre-score + LLM match score（fallback）
+    matcher.py           keyword pre-score + LLM match score（含資歷 under/fit/over）
+    jobflags.py          AI／合約／外派 flag（純關鍵字，零 LLM 成本）
+    polish.py            發送前 AI 潤色（email 內文 / OfferToday 自我介紹 + 輸出檢查）
+    tuning.py            Settings 頁 -> .env 嘅有效設定（掃描量／豁免／預算／潤色）
     cl_generator.py      CL 生成（CV 事實硬限制）
     apply_bot.py         平台內半自動預填（唔提交）
     email_bot.py         gov.hk email 申請（AppleScript 開 Mail + fallback）
@@ -89,6 +99,15 @@ data/                sqlite.db + Playwright profiles（gitignored）
 - `jd_text` 存全快照（職位下架都有得睇返）
 - `cover_letters` 每次編輯 = 新 version
 
+## 設定頁（新增）
+- **掃描量**：每個渠道每次收幾多份（0 = 唔設限）、OfferToday 搜尋字詞數、每 track 總上限；`+10`／`+50` 快速鍵
+- **高分豁免上限**：開關、門檻分、優先字詞、每渠道豁免額
+- **LLM 預算**：所有新 IT 工完整評分、IT 評分安全上限（0 = 唔限）、**一般工要唔要 LLM 評分（預設唔要）**、一般工每次評分上限 + 花費提示
+- **求職者資歷**：年資、優先 AI、想避開合約／外派
+- **發送前 AI 潤色**：email／自我介紹各自開關 + 額外指示
+- **掃描節奏**：每份工間隔秒數、自動掃描時間／間隔（儲存即刻重建排程）
+- **CV 版本警示**：未上載 AI／Full-stack／Developer 版會明確提示「會交通用版」
+
 ## Phase 2（未做）
 
-GraphRAG 技能網絡、Text2SQL 查詢、三層記憶＋艾賓浩斯衰減、Qwen3-8B 微調、勞工處 account 網上應徵自動化、雲端部署、通知。
+GraphRAG 技能網絡、Text2SQL 查詢、三層記憶＋艾賓浩斯衰減、Qwen3-8B 微調、勞工處 account 網上應徵自動化、雲端部署、通知、面試後自動回覆偵測（Mail 收件箱）＋跟進提醒、更多職位渠道（JobsDB／CTgoodjobs）。

@@ -616,6 +616,55 @@ async def _offertoday_intro(row: JobApplication, cfg: dict) -> str:
         return defaults[topics[0]]
 
 
+def _store_intro_polish(row: JobApplication, text: str) -> None:
+    """記低潤色後嘅自我介紹（best-effort，方便詳情頁／歷史睇返）。"""
+    try:
+        from ..db import SessionLocal
+        from ..models import JobApplication as _Job, utcnow
+
+        db = SessionLocal()
+        try:
+            db_row = db.get(_Job, row.id)
+            if db_row is None:
+                return
+            db_row.offertoday_intro_polished = text
+            db_row.offertoday_intro_polished_at = utcnow()
+            db.commit()
+        finally:
+            db.close()
+    except Exception:  # noqa: BLE001
+        log.warning("saving polished intro failed for job %s", getattr(row, "id", "?"))
+
+
+async def _offertoday_intro_polished(row: JobApplication, cfg: dict) -> tuple[str, bool]:
+    """(要發出去嘅自我介紹, 有冇 AI 潤色過)。
+
+    用戶要求：發之前用 AI 潤色一次。潤色失敗／關掉開關 -> 用原文（永遠有字可發）。
+    """
+    from .polish import PolishError, polish_intro
+    from .tuning import load_tuning
+
+    text = await _offertoday_intro(row, cfg)
+    tuning = load_tuning()
+    if not tuning.intro_polish_enabled or not (text or "").strip():
+        return text, False
+    lang = "en" if getattr(row, "jd_language", "") == "en" else "zh"
+    try:
+        polished = await polish_intro(
+            text, lang, topic=intro_topic(row),
+            title=getattr(row, "title", "") or "",
+            instructions=tuning.intro_polish_instructions,
+        )
+    except PolishError as e:
+        log.warning("intro polish skipped for job %s: %s", getattr(row, "id", "?"), e)
+        return text, False
+    except Exception as e:  # noqa: BLE001 — 任何意外都唔可以阻礙投遞
+        log.warning("intro polish crashed for job %s: %s", getattr(row, "id", "?"), e)
+        return text, False
+    _store_intro_polish(row, polished)
+    return polished, True
+
+
 async def _offertoday_send_message(page, text: str) -> bool:
     """Type text into the chat message box and click the 「發送」 button."""
     ce = page.locator("[contenteditable='true']").first
@@ -702,10 +751,13 @@ async def _offertoday(row: JobApplication, cl_text: str, auto: bool) -> dict:
     await asyncio.sleep(1.0)
 
     # 3. type + send the self-intro message
-    intro = await _offertoday_intro(row, cfg)
+    #    用戶要求：發出去之前用 AI 潤色一次（自然、唔似 AI 拼砌）。潤色成品會
+    #    存落 DB（offertoday_intro_polished）方便你喺詳情頁睇返。
+    intro, intro_polished = await _offertoday_intro_polished(row, cfg)
+    polish_tag = " ✨ 自我介紹已 AI 潤色。" if intro_polished else ""
     if await _offertoday_send_message(page, intro):
         return {"ok": True, "kind": "submitted", "submitted": True, "url": page.url,
-                "message": f"✔ OfferToday 已發送履歷（{picked}）同自我介紹。{cv_warn}"}
+                "message": f"✔ OfferToday 已發送履歷（{picked}）同自我介紹。{polish_tag}{cv_warn}".strip()}
     return {"ok": True, "kind": "submitted", "submitted": True, "url": page.url,
             "message": f"✔ 已發送履歷（{picked}），但自我介紹未能自動發送，請喺視窗手動補發。{cv_warn}"}
 

@@ -147,23 +147,24 @@ def test_send_email_via_mail_failure_falls_to_draft(monkeypatch, tmp_path):
     assert "Mail" in " ".join(calls["last"])
 
 
-def test_open_email_compose_polishes_and_saves_cl(monkeypatch, db):
-    """發送前 AI 潤飾 CL：body 用潤飾版，並儲存做新版本。"""
+def test_open_email_compose_polishes_body(monkeypatch, db):
+    """發送前 AI 潤色**整封 email 內文**（稱呼／簽名保留），並存落 DB。"""
     import asyncio
 
     from app.models import CoverLetter, JobApplication
     from app.services import email_bot
 
     row = JobApplication(platform="govhk", job_id_on_platform="polish1",
-                         title="AI 工程師", company="測試公司", jd_language="zh",
-                         jd_text="職責：開發 AI 系統。", status="pending_review")
+                         title="系統工程師", company="測試公司", jd_language="zh",
+                         jd_text="職責：開發系統。", status="pending_review",
+                         contact_email="hr@example.com")
     db.add(row)
     db.flush()
     db.add(CoverLetter(application_id=row.id, language="zh", content="原文 CL", version=1))
     db.commit()
 
-    async def fake_polish(row, cl_text, language):
-        return "潤飾後嘅 CL（更通順、貼合呢份工）"
+    async def fake_polish(body, lang, ctx=None, instructions=""):
+        return "【潤色後嘅整封 email】"
 
     def fake_compose(email):
         return True, "draft opened"
@@ -171,7 +172,7 @@ def test_open_email_compose_polishes_and_saves_cl(monkeypatch, db):
     def fake_attach(cv_path):
         return True, ""
 
-    monkeypatch.setattr(email_bot, "polish_cl_for_email", fake_polish)
+    monkeypatch.setattr(email_bot, "polish_email_body", fake_polish)
     monkeypatch.setattr(email_bot, "compose_in_mail", fake_compose)
     monkeypatch.setattr(email_bot, "attach_cv_to_draft", fake_attach)
     monkeypatch.setattr("app.services.cv_loader.resolve_cv_path",
@@ -179,33 +180,35 @@ def test_open_email_compose_polishes_and_saves_cl(monkeypatch, db):
 
     result = asyncio.run(email_bot.open_email_compose(row, "原文 CL", send=False))
     assert result["ok"] is True
-    assert "潤飾後嘅 CL" in result["preview"]["body"]
+    assert result["preview"]["body"] == "【潤色後嘅整封 email】"
+    assert result["preview"]["polished"] is True
+    assert "原文 CL" in result["preview"]["body_original"]
+    assert "AI 潤色" in result["message"]
 
     db.expire_all()
-    vers = (db.query(CoverLetter)
-            .filter_by(application_id=row.id)
-            .order_by(CoverLetter.version.desc()).all())
-    assert len(vers) == 2
-    assert vers[0].content == "潤飾後嘅 CL（更通順、貼合呢份工）"
+    saved = db.get(JobApplication, row.id)
+    assert saved.email_body_polished == "【潤色後嘅整封 email】"
+    assert saved.email_polish_key            # cache key 記低咗
 
 
 def test_open_email_compose_polish_failure_uses_original(monkeypatch, db):
-    """AI 潤飾失敗 -> 照用原文，唔會阻礙發送。"""
+    """AI 潤色失敗 -> 照用原文模板，唔會阻礙發送。"""
     import asyncio
 
     from app.models import CoverLetter, JobApplication
     from app.services import email_bot
+    from app.services.polish import PolishError
 
     row = JobApplication(platform="govhk", job_id_on_platform="polish2",
-                         title="AI 工程師", company="測試公司", jd_language="zh",
-                         status="pending_review")
+                         title="系統工程師", company="測試公司", jd_language="zh",
+                         status="pending_review", contact_email="hr@example.com")
     db.add(row)
     db.flush()
     db.add(CoverLetter(application_id=row.id, language="zh", content="原文 CL", version=1))
     db.commit()
 
-    async def fake_polish(row, cl_text, language):
-        raise RuntimeError("LLM down")
+    async def fake_polish(body, lang, ctx=None, instructions=""):
+        raise PolishError("LLM down")
 
     def fake_compose(email):
         return True, "draft opened"
@@ -213,7 +216,7 @@ def test_open_email_compose_polish_failure_uses_original(monkeypatch, db):
     def fake_attach(cv_path):
         return True, ""
 
-    monkeypatch.setattr(email_bot, "polish_cl_for_email", fake_polish)
+    monkeypatch.setattr(email_bot, "polish_email_body", fake_polish)
     monkeypatch.setattr(email_bot, "compose_in_mail", fake_compose)
     monkeypatch.setattr(email_bot, "attach_cv_to_draft", fake_attach)
     monkeypatch.setattr("app.services.cv_loader.resolve_cv_path",
@@ -222,9 +225,72 @@ def test_open_email_compose_polish_failure_uses_original(monkeypatch, db):
     result = asyncio.run(email_bot.open_email_compose(row, "原文 CL", send=False))
     assert result["ok"] is True
     assert "原文 CL" in result["preview"]["body"]
+    assert result["preview"]["polished"] is False
 
     db.expire_all()
-    vers = (db.query(CoverLetter)
-            .filter_by(application_id=row.id)
-            .order_by(CoverLetter.version.desc()).all())
-    assert len(vers) == 1   # 冇儲存新版本
+    saved = db.get(JobApplication, row.id)
+    assert saved.email_body_polished == ""      # 冇存過潤色版
+
+
+def test_email_polish_cache_skips_second_llm_call(monkeypatch, db):
+    """同一封（同一 CL 內容／模板）再撳預覽唔會再洗 LLM。"""
+    import asyncio
+
+    from app.models import CoverLetter, JobApplication
+    from app.services import email_bot
+
+    row = JobApplication(platform="govhk", job_id_on_platform="polish3",
+                         title="系統工程師", company="測試公司", jd_language="zh",
+                         status="pending_review", contact_email="hr@example.com")
+    db.add(row)
+    db.flush()
+    db.add(CoverLetter(application_id=row.id, language="zh", content="原文 CL", version=1))
+    db.commit()
+
+    calls = {"n": 0}
+
+    async def fake_polish(body, lang, ctx=None, instructions=""):
+        calls["n"] += 1
+        return "潤色版"
+
+    monkeypatch.setattr(email_bot, "polish_email_body", fake_polish)
+
+    key = email_bot.polish_cache_key("原文 CL", "standard", "zh")
+    first = asyncio.run(email_bot.build_email_polished(row, "原文 CL", "", "standard"))
+    assert first[1] is True and calls["n"] == 1
+    assert first[0]["body"] == "潤色版"
+
+    # 第二次：cache 命中 -> 唔會再 call LLM
+    row.email_polish_key = key
+    row.email_body_polished = "潤色版"
+    second = asyncio.run(email_bot.build_email_polished(row, "原文 CL", "", "standard"))
+    assert second[1] is True and calls["n"] == 1
+
+    # 換咗 CL -> key 唔同 -> 會重新潤色
+    third = asyncio.run(email_bot.build_email_polished(row, "改過嘅 CL", "", "standard"))
+    assert third[1] is True and calls["n"] == 2
+
+
+def test_email_polish_disabled_uses_template(monkeypatch, db):
+    """設定頁關咗潤色 -> 0 次 LLM，照用模板原文。"""
+    import asyncio
+
+    from app.models import JobApplication, Profile
+    from app.services import email_bot
+
+    db.add(Profile(id=1, email_polish_enabled=False))
+    row = JobApplication(platform="govhk", job_id_on_platform="polish4",
+                         title="系統工程師", company="測試公司", jd_language="zh",
+                         status="pending_review", contact_email="hr@example.com")
+    db.add(row)
+    db.commit()
+
+    async def fake_polish(body, lang, ctx=None, instructions=""):
+        raise AssertionError("唔應該 call LLM")
+
+    monkeypatch.setattr(email_bot, "polish_email_body", fake_polish)
+    email, polished, original = asyncio.run(
+        email_bot.build_email_polished(row, "原文 CL", "", "standard"))
+    assert polished is False
+    assert "原文 CL" in email["body"]
+    assert email["body"] == original

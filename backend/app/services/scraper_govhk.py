@@ -28,7 +28,8 @@ from bs4 import BeautifulSoup
 
 from ..config import settings
 from . import scan_control
-from .classify import TrackConfig, classify, title_matches
+from .classify import (PRIORITY_SCAN_SLACK, TrackConfig, classify, is_priority_job,
+                       title_matches)
 from .jobdate import is_fresh
 from .scraper_base import BrowserSession, JobDraft, grab_html, human_delay, open_page
 
@@ -315,14 +316,41 @@ async def _scrape_gbayes(session: BrowserSession, seen: set[str],
     return drafts
 
 
+def _cap_budget(cfg: TrackConfig) -> tuple[int, int]:
+    """(非優先軟上限, 優先豁免額)。軟上限 0 = 唔設限。"""
+    soft = max(0, int(cfg.govhk_max_jobs))
+    extra = max(0, int(cfg.priority_extra_max)) if cfg.cap_bypass_enabled else 0
+    return soft, extra
+
+
+def _room_for(title: str, skills, normal: int, priority: int, cfg: TrackConfig) -> tuple[bool, bool]:
+    """(可唔可以收做普通工, 可唔可以收做優先工)。豁免關掉就冇優先額。
+
+    軟上限用盡之後，只有優先工（標題命中優先字詞／pre-score 夠高）仲有 room；
+    兩者都冇 room = 呢份唔收（唔會開詳情頁，慳時間）。
+    """
+    soft, extra = _cap_budget(cfg)
+    room_normal = soft <= 0 or normal < soft
+    prio = bool(extra) and priority < extra and is_priority_job(title, "", skills, cfg)
+    return room_normal, prio
+
+
 async def _scrape_it(session: BrowserSession, seen: set[str],
                      cfg: TrackConfig | None = None) -> list[JobDraft]:
     """資訊及科技界 joblist (POST search + session GET pages), capped per scan.
 
     The category itself already restricts to IT/tech, so no extra title filter.
+    用戶要求：評級好高嘅工（標題命中優先字詞／pre-score 夠高）無視渠道上限 ——
+    軟上限只計非優先工，優先工另有豁免額（cfg.priority_extra_max）。
+    軟上限用盡之後唔會再開詳情頁，只會繼續揭頁搵優先工（連續 PRIORITY_SCAN_SLACK
+    個都唔中就先收手，唔會白揭 30 頁）。
     """
+    from .cv_loader import load_skills
+
     cfg = cfg or TrackConfig.defaults("it")
+    skills = load_skills()
     drafts: list[JobDraft] = []
+    normal = priority = misses = 0
 
     try:
         resp = await session.context.request.post(SIMPLE_URL, form=IT_SEARCH_FORM)
@@ -349,11 +377,21 @@ async def _scrape_it(session: BrowserSession, seen: set[str],
         matches = [it for it in items if it["job_id"] and it["job_id"] not in seen]
         for it in matches:
             seen.add(it["job_id"])
-            drafts.append(await _fetch_detail(session, it, IT_PLATFORM, "it"))
-            # 資訊及科技界：每次 scan 最多 N 份（設定可改）
-            if cfg.govhk_max_jobs > 0 and len(drafts) >= cfg.govhk_max_jobs:
-                log.info("govhk IT: reached %s-job cap, stopping channel", len(drafts))
-                return drafts
+            room_normal, room_priority = _room_for(it["title"], skills, normal, priority, cfg)
+            if not room_normal and not room_priority:
+                misses += 1
+                if _cap_budget(cfg)[0] > 0 and misses >= PRIORITY_SCAN_SLACK:
+                    log.info("govhk IT: %s normal cap reached and no priority job in the "
+                             "last %s items, stopping channel", cfg.govhk_max_jobs, misses)
+                    return drafts
+                continue          # 唔開詳情頁：軟上限已滿又唔係優先工
+            if room_normal:
+                normal += 1
+            else:
+                priority += 1     # 高分豁免：照收
+            misses = 0
+            d = await _fetch_detail(session, it, IT_PLATFORM, "it")
+            drafts.append(d)
             # list is sorted newest-first: first stale job -> stop this channel
             if drafts and _too_old(drafts[-1].posted_at):
                 log.info("govhk IT: reached posting-date window (%s), stopping channel",
@@ -363,7 +401,8 @@ async def _scrape_it(session: BrowserSession, seen: set[str],
                 log.info("govhk IT: stop requested mid-item — returning partial drafts")
                 return drafts
         if page_no % 5 == 0:
-            log.info("govhk IT page %s: %s new, %s drafts so far", page_no, len(matches), len(drafts))
+            log.info("govhk IT page %s: %s new, %s drafts so far (%s normal + %s priority)",
+                     page_no, len(matches), len(drafts), normal, priority)
         await human_delay(0.4, 1.0)
 
     return drafts
@@ -375,10 +414,15 @@ async def _scrape_general(session: BrowserSession, seen: set[str],
 
     Same list/detail format as the gbayes quickview (div.row.item[data-jobcard]).
     IT-classified titles are excluded; the list is newest-first so the first
-    stale job stops the channel; capped at cfg.govhk_max_jobs per scan.
+    stale job stops the channel; capped at cfg.govhk_max_jobs per scan
+    （軟上限只計非優先工；高分優先工另有豁免額）。
     """
+    from .cv_loader import load_skills
+
     cfg = cfg or TrackConfig.defaults("general")
+    skills = load_skills()
     drafts: list[JobDraft] = []
+    normal = priority = misses = 0
 
     for page_no in range(1, MAX_PAGES + 1):
         if scan_control.stop_requested():
@@ -403,10 +447,21 @@ async def _scrape_general(session: BrowserSession, seen: set[str],
         ]
         for it in matches:
             seen.add(it["job_id"])
-            drafts.append(await _fetch_detail(session, it, GENERAL_PLATFORM, "general"))
-            if cfg.govhk_max_jobs > 0 and len(drafts) >= cfg.govhk_max_jobs:
-                log.info("govhk general: reached %s-job cap, stopping channel", len(drafts))
-                return drafts
+            room_normal, room_priority = _room_for(it["title"], skills, normal, priority, cfg)
+            if not room_normal and not room_priority:
+                misses += 1
+                if _cap_budget(cfg)[0] > 0 and misses >= PRIORITY_SCAN_SLACK:
+                    log.info("govhk general: %s normal cap reached and no priority job in "
+                             "the last %s items, stopping channel", cfg.govhk_max_jobs, misses)
+                    return drafts
+                continue          # 唔開詳情頁：軟上限已滿又唔係優先工
+            if room_normal:
+                normal += 1
+            else:
+                priority += 1     # 高分豁免：照收
+            misses = 0
+            d = await _fetch_detail(session, it, GENERAL_PLATFORM, "general")
+            drafts.append(d)
             if drafts and _too_old(drafts[-1].posted_at):
                 log.info("govhk general: reached posting-date window (%s), stopping channel",
                          drafts[-1].posted_at)
@@ -415,7 +470,8 @@ async def _scrape_general(session: BrowserSession, seen: set[str],
                 log.info("govhk general: stop requested mid-item — returning partial drafts")
                 return drafts
         if page_no % 5 == 0:
-            log.info("govhk general page %s: %s new matches, %s drafts so far", page_no, len(matches), len(drafts))
+            log.info("govhk general page %s: %s new matches, %s drafts so far (%s normal + %s priority)",
+                     page_no, len(matches), len(drafts), normal, priority)
         await human_delay(0.5, 1.2)
 
     return drafts

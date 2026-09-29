@@ -6,7 +6,8 @@ export type Status =
   | "failed"
   | "interviewing"
   | "rejected"
-  | "offer";
+  | "offer"
+  | "no_response";
 
 export interface CoverLetter {
   id: number;
@@ -36,6 +37,16 @@ export interface Job {
   match_score: number;
   match_reason: string;
   job_summary: string;
+  // fit 標籤（職位台篩選 chip）
+  ai_match: boolean;
+  is_contract: boolean;
+  is_agency: boolean;
+  match_level: "" | "under" | "fit" | "over";
+  // 申請時實際會交邊份 CV（AI 版／Full-stack 版／Developer 版／通用版）
+  cv_variant: string;
+  // 發送前 AI 潤色成品
+  offertoday_intro_polished: string;
+  email_polished_at: string | null;
   apply_method: string;
   contact_email: string;
   contact_person: string;
@@ -55,7 +66,14 @@ export interface JobList {
   total: number;
   hidden_low_match: number;
   // filter-chip badge counts (respecting the active filters, minus the counted dimension)
-  facets: { statuses: Record<string, number>; platforms: Record<string, number> };
+  facets: {
+    statuses: Record<string, number>;
+    platforms: Record<string, number>;
+    ai?: number;
+    contract?: number;
+    agency?: number;
+    levels?: Record<string, number>;
+  };
 }
 
 export interface ScanStatus {
@@ -73,6 +91,8 @@ export interface ScanStatus {
     backfilled: number;
     low_match: number;
     details_fetched: number;
+    priority_kept?: number;
+    priority_capped?: number;
     stopped: boolean;
     errors: string[];
     track: string;
@@ -82,7 +102,9 @@ export interface ScanStatus {
       skipped_location?: number; capped: number;
     }>;
   } | null;
-  last_backfill: { at: string; processed: number } | null;
+  last_backfill: {
+    at: string; processed: number; scope?: string; left?: number;
+  } | null;
   last_jd_backfill?: { at: string; processed: number; left: number } | null;
   progress: { platform: string; phase: string; count: number };
   last_error: string | null;
@@ -90,6 +112,19 @@ export interface ScanStatus {
   track: string | null;
   channels?: string[];
   channel_labels?: Record<string, string>;
+}
+
+export interface FunnelRow {
+  key: string;
+  label: string;
+  applied: number;
+  responded: number;
+  interviewing: number;
+  rejected: number;
+  no_response: number;
+  offer: number;
+  pending: number;
+  response_rate: number;
 }
 
 export interface Stats {
@@ -101,6 +136,10 @@ export interface Stats {
   weekly_applied: { week: string; count: number }[];
   weekly_goal: number;
   applied_this_week: number;
+  funnel?: FunnelRow[];
+  funnel_by_category?: FunnelRow[];
+  funnel_by_ai?: FunnelRow[];
+  funnel_by_score?: FunnelRow[];
 }
 
 export interface Profile {
@@ -147,6 +186,35 @@ export interface Profile {
   govhk_general_max_jobs: number;
   offertoday_it_max_per_search: number;
   offertoday_general_max_per_search: number;
+  // 掃描量
+  offertoday_it_max_searches: number;
+  offertoday_general_max_searches: number;
+  max_scan_jobs: number;
+  // 高分豁免上限
+  cap_bypass_enabled: boolean;
+  cap_bypass_min_score: number;
+  priority_keywords: string;
+  priority_extra_max: number;
+  // LLM 預算
+  max_enrich_per_scan: number;
+  enrich_all_it: boolean;
+  max_enrich_it_per_scan: number;
+  enrich_general_jobs: boolean;
+  // 掃描節奏
+  scan_job_delay_min_seconds: number;
+  scan_job_delay_max_seconds: number;
+  scan_hour: number;
+  scan_day_interval: number;
+  // 求職者資歷
+  years_experience: number;
+  prefer_ai: boolean;
+  avoid_contract: boolean;
+  avoid_agency: boolean;
+  // 發送前 AI 潤色
+  email_polish_enabled: boolean;
+  email_polish_instructions: string;
+  intro_polish_enabled: boolean;
+  intro_polish_instructions: string;
   updated_at: string;
 }
 
@@ -171,6 +239,8 @@ export interface EmailPreview {
   subject: string;
   body: string;
   attachment: string;
+  polished?: boolean;
+  body_original?: string;
 }
 
 export interface EmailTemplate {
@@ -189,6 +259,13 @@ export const STATUS_LABEL: Record<Status, string> = {
   interviewing: "面試中",
   rejected: "已拒絕",
   offer: "錄取",
+  no_response: "冇回音",
+};
+
+export const LEVEL_LABEL: Record<string, string> = {
+  under: "資歷有餘",
+  fit: "資歷啱",
+  over: "資歷超出",
 };
 
 export const PLATFORM_LABEL: Record<string, string> = {

@@ -22,24 +22,27 @@ from ..schemas import (
 from ..services import scraper_jobsdb, scraper_offertoday
 from ..services.apply_bot import open_apply
 from ..services.cl_generator import generate_cl_checked
-from ..services.cv_loader import get_cv_text, load_skills
-from ..services.email_bot import build_email
+from ..services.cv_loader import (CVError, VARIANT_LABEL, get_cv_text, load_skills,
+                                  resolve_cv_for_job)
+from ..services.email_bot import build_email_polished
 from ..services.language import detect_language
 from ..services.llm import LLMError
 from ..services.matcher import score_job
 from ..services.scanner import make_dup_key
 from ..services.jobdate import parse_posted_date
-from ..services.jobdate import parse_posted_date
 from ..services.scraper_base import get_browser
 from ..services.store import mark_applied
+from ..services.tuning import load_tuning
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
 VALID_STATUSES = {
     "pending_review", "low_match", "applied", "needs_manual_intervention",
-    "failed", "interviewing", "rejected", "offer",
+    "failed", "interviewing", "rejected", "offer", "no_response",
 }
+# 有記錄結果嘅狀態（PATCH 時會記 outcome_at，餵統計漏斗）
+OUTCOME_STATUSES = {"interviewing", "rejected", "offer", "no_response"}
 
 
 def _load(db: Session, job_id: int) -> JobApplication:
@@ -92,9 +95,20 @@ def _parse_day(value: str | None, name: str, date_only: bool) -> date | datetime
 def _apply_filters(query, *, statuses=None, platforms=None, category=None, q="",
                    show_all=False, added_from=None, added_to=None,
                    posted_from=None, posted_to=None, min_match=None, max_match=None,
-                   has_jd=False, has_cl=False, ready_to_apply=False):
+                   has_jd=False, has_cl=False, ready_to_apply=False,
+                   ai_only=False, exclude_contract=False, exclude_agency=False,
+                   levels=None):
     """Shared filter builder. ``statuses``/``platforms`` are lists (multi-select).
-    Used both for the main query and for facet counts."""
+    Used both for the main query and for facet counts.
+
+    ``ai_only`` / ``exclude_contract`` / ``exclude_agency`` / ``levels`` 係
+    「搵更適合自己嘅工」嘅篩選（flag 喺 jobflags.py 計）：
+      - ai_only: 標題或 JD 提到 AI（職位台「✦ AI 職位」chip）
+      - exclude_contract: 唔要合約／臨時／兼職／實習（用戶想搵穩定長工）
+      - exclude_agency: 唔要外派／獵頭／人力資源公司
+      - levels: 資歷級別（under／fit／over 複選；未評分嘅工 level 係空，
+        只有用戶明確揀 level 先會排除佢哋）
+    """
     if not settings.JOBSDB_ENABLED:
         # JobsDB is hidden for now — keep its rows out of the board.
         query = query.filter(JobApplication.platform != "jobsdb")
@@ -104,6 +118,14 @@ def _apply_filters(query, *, statuses=None, platforms=None, category=None, q="",
         query = query.filter(JobApplication.platform.in_(platforms))
     if category in ("it", "general"):
         query = query.filter(JobApplication.category == category)
+    if ai_only:
+        query = query.filter(JobApplication.ai_match.is_(True))
+    if exclude_contract:
+        query = query.filter(JobApplication.is_contract.is_(False))
+    if exclude_agency:
+        query = query.filter(JobApplication.is_agency.is_(False))
+    if levels:
+        query = query.filter(JobApplication.match_level.in_(levels))
     # 低匹配工預設隱藏；但若用戶明確篩選 low_match 就唔好再排除（否則會出空列表）
     if not show_all and (not statuses or "low_match" not in statuses):
         query = query.filter(JobApplication.status != "low_match")
@@ -147,7 +169,11 @@ def _apply_filters(query, *, statuses=None, platforms=None, category=None, q="",
 
 def _facets(db: Session, **filters) -> dict:
     """Per-status / per-platform counts under the active filters (excluding the
-    dimension being counted) — powers the badge numbers on the filter chips."""
+    dimension being counted) — powers the badge numbers on the filter chips.
+
+    另外回報 AI／合約／外派／資歷級別嘅數量（新 chip 用），同樣「唔計自己嗰個
+    維度」——否則 chip 一撳落去自己就會顯示 0。
+    """
     status_facets: dict[str, int] = {}
     base = _apply_filters(db.query(JobApplication),
                           statuses=None, platforms=filters.get("platforms"),
@@ -160,7 +186,36 @@ def _facets(db: Session, **filters) -> dict:
                           **{k: v for k, v in filters.items() if k not in ("statuses", "platforms")})
     for p, n in base.with_entities(JobApplication.platform, func.count()).group_by(JobApplication.platform):
         platform_facets[p] = n
-    return {"statuses": status_facets, "platforms": platform_facets}
+
+    # AI／合約／外派：計嘅時候唔套用 ai_only（否則撳咗 AI chip 之後其他數字會變 0）
+    flag_base = {k: v for k, v in filters.items() if k != "ai_only"}
+    flag_counts: dict[str, int] = {}
+    for flag, column in (("ai", JobApplication.ai_match),
+                         ("contract", JobApplication.is_contract),
+                         ("agency", JobApplication.is_agency)):
+        q = _apply_filters(db.query(JobApplication), ai_only=False, **flag_base)
+        flag_counts[flag] = q.filter(column.is_(True)).count()
+
+    # 資歷級別：唔套用 levels（同上原因）
+    level_base = {k: v for k, v in filters.items() if k != "levels"}
+    level_facets: dict[str, int] = {}
+    q = _apply_filters(db.query(JobApplication), levels=[], **level_base)
+    for lvl, n in q.with_entities(JobApplication.match_level, func.count()).group_by(
+            JobApplication.match_level):
+        level_facets[lvl or "unknown"] = n
+
+    return {"statuses": status_facets, "platforms": platform_facets,
+            "levels": level_facets, **flag_counts}
+
+
+def _attach_cv_variant(rows: list[JobApplication]) -> None:
+    """每行填 `cv_variant`（申請時實際會交邊份 CV；UI 顯示用）。"""
+    for r in rows:
+        try:
+            _path, variant = resolve_cv_for_job(r.title or "", r.jd_language or "zh")
+        except Exception:  # noqa: BLE001 — 冇設定 CV 都唔應該爆
+            variant = "default"
+        r.cv_variant = VARIANT_LABEL.get(variant or "default", variant or "default")
 
 
 @router.get("", response_model=JobListOut)
@@ -173,9 +228,14 @@ def list_jobs(status: str | None = None, platform: str | None = None,
               min_match: int | None = None, max_match: int | None = None,
               has_jd: bool = False, has_cl: bool = False,
               ready_to_apply: bool = False,
+              ai_only: bool = False, exclude_contract: bool = False,
+              exclude_agency: bool = False, levels: str | None = None,
               db: Session = Depends(get_db)):
     """List jobs. status / platform accept comma-separated multi-selects;
-    ready_to_apply = 待處理 + 有 CL + 唔係外部網站 (可以即刻投遞)."""
+    ready_to_apply = 待處理 + 有 CL + 唔係外部網站 (可以即刻投遞).
+
+    sort="focus" = 「更適合自己」排序：AI 優先 -> 高分 -> 新鮮。
+    """
     filters = dict(
         statuses=_split_multi(status), platforms=_split_multi(platform),
         category=category, q=q, show_all=show_all,
@@ -183,6 +243,8 @@ def list_jobs(status: str | None = None, platform: str | None = None,
         posted_from=posted_from, posted_to=posted_to,
         min_match=min_match, max_match=max_match,
         has_jd=has_jd, has_cl=has_cl, ready_to_apply=ready_to_apply,
+        ai_only=ai_only, exclude_contract=exclude_contract,
+        exclude_agency=exclude_agency, levels=_split_multi(levels),
     )
     query = _apply_filters(db.query(JobApplication), **filters)
     order = {
@@ -191,9 +253,13 @@ def list_jobs(status: str | None = None, platform: str | None = None,
         # 刊登日期：用正規化 posted_date 排序（無刊登日期嘅排最後）
         "posted": (JobApplication.posted_date.desc().nullslast(), JobApplication.id.desc()),
         "match": (JobApplication.match_score.desc(),),
+        # 「AI 優先 + 高分 + 新鮮」：第一眼就見到最啱自己嘅工
+        "focus": (JobApplication.ai_match.desc(), JobApplication.match_score.desc(),
+                  JobApplication.posted_date.desc().nullslast(), JobApplication.id.desc()),
     }.get(sort)
     if order is None:
-        raise HTTPException(status_code=400, detail=f"sort 必須係 updated/created/posted/match")
+        raise HTTPException(
+            status_code=400, detail="sort 必須係 updated/created/posted/match/focus")
     total = query.count()
     # 低匹配總數（永遠回報，畀前端顯示「顯示低匹配 (N)」同 pager 提示）
     hidden_q = db.query(JobApplication).filter(JobApplication.status == "low_match")
@@ -204,6 +270,7 @@ def list_jobs(status: str | None = None, platform: str | None = None,
             .offset(offset).limit(limit)
             .options(selectinload(JobApplication.cover_letters)).all())
     _attach_dup_counts(db, rows)
+    _attach_cv_variant(rows)
     return JobListOut(items=rows, total=total, hidden_low_match=hidden,
                       facets=_facets(db, **filters))
 
@@ -367,7 +434,10 @@ def email_templates():
 
 @router.get("/{job_id}", response_model=JobApplicationOut)
 def get_job(job_id: int, db: Session = Depends(get_db)):
-    return _load(db, job_id)
+    row = _load(db, job_id)
+    _attach_dup_counts(db, [row])
+    _attach_cv_variant([row])
+    return row
 
 
 @router.post("/{job_id}/fetch-detail")
@@ -488,9 +558,15 @@ async def refresh_job(job_id: int, db: Session = Depends(get_db)):
     row.jd_language = detect_language(row.jd_text or row.title)
     job_dict = {"title": row.title, "company": row.company, "location": row.location,
                 "salary_range": row.salary_range, "jd_text": row.jd_text, "short_desc": ""}
-    score, reason = await score_job(job_dict, load_skills())
+    score, reason, level = await score_job(job_dict, load_skills())
     row.match_score = score
     row.match_reason = reason
+    row.match_level = level
+    from ..services.jobflags import compute_flags
+    _flags = compute_flags(row)
+    row.ai_match = _flags["ai_match"]
+    row.is_contract = _flags["is_contract"]
+    row.is_agency = _flags["is_agency"]
     if row.company and row.title:
         row.dup_key = make_dup_key(row.company, row.title)
     # 已投遞嘅工唔可以因為 refresh 而變返未投（否則會被重複投遞）。
@@ -507,7 +583,8 @@ async def refresh_job(job_id: int, db: Session = Depends(get_db)):
                       .order_by(CoverLetter.version.desc()).first())
             db.add(CoverLetter(application_id=row.id, language=row.jd_language,
                                content=content, version=(latest.version + 1 if latest else 1)))
-        except LLMError as e:
+        except (LLMError, CVError) as e:
+            # 冇 LLM key 或者未設定 CV 都唔應該令「重新整理」爆 500：分數照更新
             log.warning("CL gen failed on refresh: %s", e)
 
     if not row.job_summary and row.jd_text:
@@ -561,24 +638,30 @@ async def regenerate_cl(job_id: int, payload: RegenerateCLLIn, db: Session = Dep
 
 
 @router.get("/{job_id}/email-preview", response_model=EmailPreview)
-def email_preview(job_id: int, template: str = "standard", db: Session = Depends(get_db)):
-    """Preview the composed application email WITHOUT opening Mail."""
+async def email_preview(job_id: int, template: str = "standard", db: Session = Depends(get_db)):
+    """Preview the composed application email WITHOUT opening Mail.
+
+    同實際發送行**同一條 AI 潤色路徑**（`build_email_polished`）——所以預覽同
+    實寄係同一份文字；`polished` / `body_original` 話俾 UI 知有冇潤色過。
+    """
     row = _load(db, job_id)
     if not row.contact_email:
         raise HTTPException(status_code=400, detail="呢份工冇聯絡 email，唔可以用 email 申請")
     latest = (db.query(CoverLetter).filter_by(application_id=row.id)
               .order_by(CoverLetter.version.desc()).first())
     _sync_jd_language(db, row)
-    from ..services.cv_loader import resolve_cv_for_job, resolve_cv_path
+    from ..services.cv_loader import resolve_cv_path
     # 同實際發送一致：用版本階梯（AI -> Full-stack -> Developer -> 通用）
     cv_path, _variant = resolve_cv_for_job(row.title, row.jd_language)
     if not cv_path:
         cv_path = resolve_cv_path(row.jd_language) or resolve_cv_path(
             "zh" if row.jd_language == "en" else "en")
-    email = build_email(row, latest.content if latest else "", cv_path, template)
+    email, polished, original_body = await build_email_polished(
+        row, latest.content if latest else "", cv_path, template)
     return EmailPreview(
         to=email["to"], contact_person=row.contact_person,
         subject=email["subject"], body=email["body"], attachment=email["attachment"],
+        polished=polished, body_original=original_body,
     )
 
 
@@ -636,15 +719,22 @@ def apply_done(job_id: int, db: Session = Depends(get_db)):
 
 @router.patch("/{job_id}", response_model=JobApplicationOut)
 def update_job(job_id: int, payload: UpdateApplicationIn, db: Session = Depends(get_db)):
+    """更新狀態／面試進度／備註。記錄結果（面試中／冇回音／落選／Offer）會順手
+    填 `outcome_at`，統計頁嘅漏斗就靠佢。"""
     row = _load(db, job_id)
     if payload.status is not None:
         if payload.status not in VALID_STATUSES:
             raise HTTPException(status_code=400, detail=f"invalid status: {payload.status}")
         row.status = payload.status
+        if payload.status in OUTCOME_STATUSES:
+            row.outcome_at = utcnow()
+        elif payload.status == "applied":
+            row.outcome_at = None      # 改返「已投遞」= 結果未定
     if payload.interview_stage is not None:
         row.interview_stage = payload.interview_stage
     if payload.notes is not None:
         row.notes = payload.notes
     db.commit()
     db.refresh(row)
+    _attach_cv_variant([row])
     return row

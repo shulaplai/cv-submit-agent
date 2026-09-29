@@ -15,10 +15,17 @@ export function Dashboard({
   const [statuses, setStatuses] = useState<string[]>([]);   // 複選
   const [platforms, setPlatforms] = useState<string[]>([]); // 複選
   const [readyOnly, setReadyOnly] = useState(false);        // ⚡ 可以即刻投遞
+  // 「搵更適合自己嘅工」篩選（AI／合約／外派／資歷）
+  const [aiOnly, setAiOnly] = useState(false);
+  const [noContract, setNoContract] = useState(false);
+  const [noAgency, setNoAgency] = useState(false);
+  const [levelFit, setLevelFit] = useState(false);
   const [category, setCategory] = useState<"it" | "general" | "">("it");
   const [q, setQ] = useState("");
   const [showAll, setShowAll] = useState(true); // 預設顯示全部（包括低匹配工）
-  const [sort, setSort] = useState("updated");
+  // 預設「focus」= AI 優先 -> 高分 -> 新鮮（IT 頁）；切去一般頁會轉返「updated」
+  const [sort, setSort] = useState("focus");
+  const [shortlist, setShortlist] = useState<Job[]>([]);
   const [addedFrom, setAddedFrom] = useState("");
   const [addedTo, setAddedTo] = useState("");
   const [addedPreset, setAddedPreset] = useState<"" | "today" | "7d" | "30d">("");
@@ -71,9 +78,13 @@ export function Dashboard({
     setStatuses([]);
     setPlatforms([]);
     setReadyOnly(false);
+    setAiOnly(false);
+    setNoContract(false);
+    setNoAgency(false);
+    setLevelFit(false);
     setQ("");
     setShowAll(true); // 清除 filter 後回復「顯示全部（包括低匹配）」
-    setSort("updated");
+    setSort(category === "general" ? "updated" : "focus");
     setAddedFrom("");
     setAddedTo("");
     setAddedPreset("");
@@ -87,7 +98,7 @@ export function Dashboard({
 
   const load = useCallback(async () => {
     try {
-      const [jobs, s] = await Promise.all([
+      const [jobs, s, picks] = await Promise.all([
         api.listJobs({
           status: statuses.length ? statuses.join(",") : undefined,
           platform: platforms.length ? platforms.join(",") : undefined,
@@ -104,11 +115,21 @@ export function Dashboard({
           has_jd: hasJd || undefined,
           has_cl: hasCl || undefined,
           ready_to_apply: readyOnly || undefined,
+          ai_only: aiOnly || undefined,
+          exclude_contract: noContract || undefined,
+          exclude_agency: noAgency || undefined,
+          levels: levelFit ? "fit" : undefined,
           limit: pageSize,
           offset: (page - 1) * pageSize,
         }),
         api.stats(),
+        // ✦ 今日精選：AI 優先 + ≥65 分 + CL 已備（唔阻住下面嘅列表）
+        api.listJobs({
+          category: "it", sort: "focus", min_match: 65,
+          ready_to_apply: true, show_all: false, limit: 5,
+        }),
       ]);
+      setShortlist(picks.items);
       setData(jobs);
       setStats({
         applied7: s.applied_last_7d,
@@ -124,7 +145,7 @@ export function Dashboard({
     }
   }, [statuses, platforms, category, q, showAll, sort, addedFrom, addedTo,
       postedFrom, postedTo, minMatch, maxMatch, hasJd, hasCl, readyOnly,
-      page, pageSize, pushToast]);
+      aiOnly, noContract, noAgency, levelFit, page, pageSize, pushToast]);
 
   useEffect(() => {
     load();
@@ -134,7 +155,8 @@ export function Dashboard({
   useEffect(() => {
     setPage(1);
   }, [statuses, platforms, category, q, showAll, sort, addedFrom, addedTo,
-      postedFrom, postedTo, minMatch, maxMatch, hasJd, hasCl, readyOnly, pageSize]);
+      postedFrom, postedTo, minMatch, maxMatch, hasJd, hasCl, readyOnly,
+      aiOnly, noContract, noAgency, levelFit, pageSize]);
 
   // poll batch progress while running
   useEffect(() => {
@@ -186,6 +208,31 @@ export function Dashboard({
       setTimeout(load, 3000);
     } catch (e) {
       pushToast(`補齊失敗: ${(e as Error).message}`, "err");
+    }
+  };
+
+  // 用戶痛點：173 份 IT 工從來冇評分（match_score 0）→ 排序永遠沉底。
+  // 一撳分批補返（每批 30 份，會用 LLM）。
+  const doScoreUnscored = async () => {
+    try {
+      const r = await api.backfill({ scope: "it_unscored", limit: 30 });
+      pushToast(r.message || "開始補齊未評分 IT 工", "info");
+      setTimeout(load, 3000);
+    } catch (e) {
+      pushToast(`補齊失敗: ${(e as Error).message}`, "err");
+    }
+  };
+
+  const applyShortlist = async () => {
+    const ids = shortlist.map((j) => j.id);
+    if (!ids.length) return;
+    try {
+      const r = await api.batchApply(ids);
+      pushToast(r.message, "info");
+      setBatch({ running: true, total: r.total, done: 0, results: [] });
+      setShowBatchResult(false);
+    } catch (e) {
+      pushToast(`一齊投遞失敗: ${(e as Error).message}`, "err");
     }
   };
 
@@ -241,13 +288,19 @@ export function Dashboard({
       <div className="track-tabs">
         <button
           className={`track-tab ${category === "it" ? "active" : ""}`}
-          onClick={() => setCategory("it")}
+          onClick={() => {
+            setCategory("it");
+            setSort("focus");       // IT 頁預設 AI 優先
+          }}
         >
           <b>IT</b> 職位
         </button>
         <button
           className={`track-tab ${category === "general" ? "active" : ""}`}
-          onClick={() => setCategory("general")}
+          onClick={() => {
+            setCategory("general");
+            setSort("updated");     // 一般頁維持原本排序
+          }}
         >
           <b>一般</b> 職位（非 IT）
         </button>
@@ -281,6 +334,38 @@ export function Dashboard({
         >
           ⚡ 可以即刻投遞
         </button>
+        <button
+          className={`chip-btn ${aiOnly ? "active" : ""}`}
+          onClick={() => setAiOnly((v) => !v)}
+          title="淨係睇 AI 相關職位（標題或 JD 提到 AI／人工智能／機器學習／LLM／大模型…）"
+        >
+          ✦ AI 職位
+          {data.facets.ai !== undefined ? ` (${data.facets.ai})` : ""}
+        </button>
+        <button
+          className={`chip-btn ${noContract ? "active" : ""}`}
+          onClick={() => setNoContract((v) => !v)}
+          title="唔要合約／臨時／兼職／實習（想搵穩定長工）"
+        >
+          ✕ 合約／臨時
+          {data.facets.contract !== undefined ? ` (${data.facets.contract})` : ""}
+        </button>
+        <button
+          className={`chip-btn ${noAgency ? "active" : ""}`}
+          onClick={() => setNoAgency((v) => !v)}
+          title="唔要外派／獵頭／人力資源公司（EA）"
+        >
+          ✕ 外派／獵頭
+          {data.facets.agency !== undefined ? ` (${data.facets.agency})` : ""}
+        </button>
+        <button
+          className={`chip-btn ${levelFit ? "active" : ""}`}
+          onClick={() => setLevelFit((v) => !v)}
+          title="只睇資歷啱你（AI 判斷：唔會要 5 年+/senior，亦唔係見習）。未評分嘅工唔會出現喺呢個篩選。"
+        >
+          ✓ 資歷啱
+          {data.facets.levels?.fit !== undefined ? ` (${data.facets.levels.fit})` : ""}
+        </button>
         {(
           [
             ["offertoday", "OfferToday"],
@@ -312,6 +397,7 @@ export function Dashboard({
           style={{ appearance: "auto" }}
           title="排序"
         >
+          <option value="focus">排序：✦ AI 優先 + 高分 + 新鮮</option>
           <option value="updated">排序：最近更新</option>
           <option value="created">排序：入庫日期（最新先）</option>
           <option value="posted">排序：刊登日期</option>
@@ -460,6 +546,46 @@ export function Dashboard({
         </div>
       )}
 
+      {shortlist.length > 0 && (
+        <div className="batch-bar" style={{ flexWrap: "wrap", gap: 10 }}>
+          <span>
+            ✦ <b>今日精選</b>
+            <span className="filter-label" style={{ marginLeft: 6 }}>
+              AI 優先 · ≥65 分 · CL 已備
+            </span>
+          </span>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, flex: 1 }}>
+            {shortlist.map((j) => (
+              <button
+                key={j.id}
+                className="chip-btn"
+                onClick={() => openDetail(j)}
+                title={`${j.company || "—"}｜${j.match_reason || ""}`}
+              >
+                {j.ai_match ? "✦ " : ""}
+                {j.title.length > 26 ? `${j.title.slice(0, 26)}…` : j.title}
+                {" · "}
+                {j.match_score}
+              </button>
+            ))}
+          </div>
+          <button className="btn primary" onClick={applyShortlist} title="一次過自動投遞呢幾份">
+            ▶ 一次過投遞
+          </button>
+          <button className="btn" onClick={doScoreUnscored} title="為未評分（0 分）嘅 IT 工補評分＋生成 CL，每次 30 份（會用 LLM）">
+            ⇪ 補齊未評分 IT 工
+          </button>
+        </div>
+      )}
+
+      {category === "general" && !loading && (
+        <div className="note-inline" style={{ marginBottom: 10 }}>
+          一般工預設<b>唔會洗 LLM 評分</b>（只有 IT 工需要）—— 佢哋照樣有 JD 同 AI／合約／外派標籤，
+          分數係關鍵字重疊分（所以多數係 0 分）。想評分就撳入去詳情頁「↻ 重新整理」，
+          或者去設定頁開「一般工都要 LLM 評分」。
+        </div>
+      )}
+
       {loading ? (
         <div className="empty">載入中…</div>
       ) : data.items.length === 0 ? (
@@ -514,6 +640,35 @@ export function Dashboard({
                   )}
                   <span>{job.salary_range || "薪酬不詳"}</span>
                   <span title="入庫日期（入咗職位台嘅日子）">入庫 {fmtDate(job.created_at)}</span>
+                  {job.match_reason.includes("未 LLM 評分") && (
+                    <span
+                      className="chip"
+                      title="一般工預設唔洗 LLM 評分（省 API）。想評分：撳入詳情頁「↻ 重新整理」"
+                    >
+                      未評分
+                    </span>
+                  )}
+                  {job.ai_match && <span className="chip ok" title="AI 相關職位（標題或 JD）">✦ AI</span>}
+                  {job.is_contract && (
+                    <span className="chip low" title="合約／臨時／兼職／實習">
+                      合約／臨時
+                    </span>
+                  )}
+                  {job.is_agency && (
+                    <span className="chip low" title="外派／獵頭／人力資源公司">
+                      外派／獵頭
+                    </span>
+                  )}
+                  {job.match_level === "over" && (
+                    <span className="chip low" title={job.match_reason}>
+                      資歷超出
+                    </span>
+                  )}
+                  {job.match_level === "under" && (
+                    <span className="chip" title={job.match_reason}>
+                      資歷有餘
+                    </span>
+                  )}
                 </div>
                 {job.job_summary && (
                   <div className="job-summary" title={job.job_summary}>
@@ -530,6 +685,12 @@ export function Dashboard({
                       : cl
                         ? "✔ CL 已備"
                         : "✎ 未生成 CL"}
+                  </span>
+                  <span
+                    className={`cl-ready ${job.cv_variant === "通用版" ? "no" : ""}`}
+                    title="申請時會交邊份 CV（跟職位標題揀版本）"
+                  >
+                    CV：{job.cv_variant || "通用版"}
                   </span>
                 </div>
                 {job.applied_at && (

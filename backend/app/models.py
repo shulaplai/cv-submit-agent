@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 
-from sqlalchemy import (Boolean, Date, DateTime, ForeignKey, Integer, String, Text,
-                        UniqueConstraint)
+from sqlalchemy import (Boolean, Date, DateTime, Float, ForeignKey, Integer, String,
+                        Text, UniqueConstraint)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -85,6 +85,42 @@ class Profile(Base):
     govhk_general_max_jobs: Mapped[int] = mapped_column(Integer, default=0)
     offertoday_it_max_per_search: Mapped[int] = mapped_column(Integer, default=0)
     offertoday_general_max_per_search: Mapped[int] = mapped_column(Integer, default=0)
+    # 每個渠道／每個 track 要開幾個搜尋頁（0 = .env 預設）
+    offertoday_it_max_searches: Mapped[int] = mapped_column(Integer, default=0)
+    offertoday_general_max_searches: Mapped[int] = mapped_column(Integer, default=0)
+    # 每個 track 每次掃描總上限（0 = .env MAX_SCAN_JOBS；0 = 唔設限）
+    max_scan_jobs: Mapped[int] = mapped_column(Integer, default=0)
+    # ---- 高分豁免上限（用戶要求：評級好高嘅工無視數量限制照收）----
+    cap_bypass_enabled: Mapped[bool] = mapped_column(default=True)
+    # 0 = .env CAP_BYPASS_MIN_SCORE
+    cap_bypass_min_score: Mapped[int] = mapped_column(Integer, default=0)
+    # 優先字詞（逗號分隔；空 = AI 職位關鍵字）。命中就一定收，唔計軟上限。
+    priority_keywords: Mapped[str] = mapped_column(Text, default="")
+    # 每個渠道每次掃描最多豁免收幾多份（0 = .env PRIORITY_EXTRA_MAX）
+    priority_extra_max: Mapped[int] = mapped_column(Integer, default=0)
+    # ---- LLM 預算 ----
+    max_enrich_per_scan: Mapped[int] = mapped_column(Integer, default=-1)  # -1 = .env 預設
+    enrich_all_it: Mapped[bool] = mapped_column(default=True)
+    max_enrich_it_per_scan: Mapped[int] = mapped_column(Integer, default=-1)  # -1 = .env；0 = 不限
+    # 一般工要唔要 LLM 評分（預設唔要：省 API，只有 IT 工評分）
+    enrich_general_jobs: Mapped[bool] = mapped_column(default=False)
+    # ---- 掃描節奏（0 = .env 預設）----
+    scan_job_delay_min_seconds: Mapped[float] = mapped_column(Float, default=0.0)
+    scan_job_delay_max_seconds: Mapped[float] = mapped_column(Float, default=0.0)
+    scan_hour: Mapped[int] = mapped_column(Integer, default=-1)       # -1 = .env 預設
+    scan_day_interval: Mapped[int] = mapped_column(Integer, default=-1)  # -1 = .env 預設
+    # 一次性「舊預設上限 -> 新預設」提升做過未（見 db._uplift_legacy_caps）
+    caps_uplifted: Mapped[bool] = mapped_column(default=False)
+    # ---- 求職者資歷（影響 match 評分同排序）----
+    years_experience: Mapped[int] = mapped_column(Integer, default=0)
+    prefer_ai: Mapped[bool] = mapped_column(default=True)
+    avoid_contract: Mapped[bool] = mapped_column(default=False)
+    avoid_agency: Mapped[bool] = mapped_column(default=False)
+    # ---- 發送前 AI 潤色 ----
+    email_polish_enabled: Mapped[bool] = mapped_column(default=True)
+    email_polish_instructions: Mapped[str] = mapped_column(Text, default="")
+    intro_polish_enabled: Mapped[bool] = mapped_column(default=True)
+    intro_polish_instructions: Mapped[str] = mapped_column(Text, default="")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
@@ -120,11 +156,23 @@ class JobApplication(Base):
     contact_email: Mapped[str] = mapped_column(String(200), default="")
     contact_person: Mapped[str] = mapped_column(String(200), default="")
     status: Mapped[str] = mapped_column(String(30), default="pending_review")
-    # pending_review | low_match | applied | needs_manual_intervention | failed | interviewing | rejected | offer
+    # pending_review | low_match | applied | needs_manual_intervention | failed | interviewing | rejected | offer | no_response
     applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     interview_stage: Mapped[str] = mapped_column(String(100), default="")
     notes: Mapped[str] = mapped_column(Text, default="")
     dup_key: Mapped[str] = mapped_column(String(300), default="", index=True)  # cross-platform dup (company+title normalized)
+    # ---- 求職者 fit 標籤（純關鍵字／LLM 判斷，職位台篩選用）----
+    ai_match: Mapped[bool] = mapped_column(Boolean, default=False)      # 標題或 JD 提到 AI
+    is_contract: Mapped[bool] = mapped_column(Boolean, default=False)  # 合約／臨時／兼職／實習
+    is_agency: Mapped[bool] = mapped_column(Boolean, default=False)    # 外派／獵頭／人力資源公司
+    match_level: Mapped[str] = mapped_column(String(10), default="")   # "" | under | fit | over
+    outcome_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # ---- 發送前 AI 潤色（發送內容 + 潤色來源 key，避免重複洗 LLM）----
+    email_body_polished: Mapped[str] = mapped_column(Text, default="")
+    email_polished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    email_polish_key: Mapped[str] = mapped_column(String(80), default="")
+    offertoday_intro_polished: Mapped[str] = mapped_column(Text, default="")
+    offertoday_intro_polished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 

@@ -150,10 +150,12 @@ def test_run_scan_caps_at_max_jobs_fair_share(db, monkeypatch):
     monkeypatch.setattr(settings, "MAX_SCAN_JOBS", 3)
 
     # gov.hk returns 3 fresh jobs, offertoday returns 3 -> cap 3 total
+    # 非優先標題（AI 相關標題而家有「高分豁免」唔受上限限制，見
+    # tests/test_priority_bypass.py）
     gov = [JobDraft(platform="govhk", job_id=f"11-26-00002{i:02d}",
-                    title="AI 工程師", posted_at="01/08/2026") for i in range(3)]
+                    title="系統工程師", posted_at="01/08/2026") for i in range(3)]
     ot = [JobDraft(platform="offertoday", job_id=f"tok{i}",
-                   title="AI Developer", posted_at="") for i in range(3)]
+                   title="Web Developer", posted_at="") for i in range(3)]
 
     async def fake_scrape(session, track="it", cfg=None, channels=None):
         return gov + ot
@@ -578,7 +580,8 @@ def test_offertoday_caps_per_search(monkeypatch):
     cap = _settings.OFFERTODAY_MAX_PER_SEARCH
 
     def make_links(search_idx):
-        return [FakeLink(f"tok{search_idx}_{i}", "AI Developer") for i in range(cap + 20)]
+        # 非優先標題：AI 相關標題有高分豁免（每頁額外最多 priority_extra_max 份）
+        return [FakeLink(f"tok{search_idx}_{i}", "Web Developer") for i in range(cap + 20)]
 
     async def fake_open_page(ctx, url):
         idx = scraper_offertoday.SEARCH_URLS.index(url)

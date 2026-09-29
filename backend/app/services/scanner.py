@@ -5,6 +5,10 @@ filters; drafts are persisted with their ``category`` (it | general) so the
 board can show one page per track. LLM budget (MAX_ENRICH_PER_SCAN) is shared
 across tracks: new jobs are prioritized by keyword pre-score, leftover budget
 goes to backfilling the oldest un-enriched rows.
+
+高分豁免上限（用戶要求）：標題命中優先字詞（預設 = AI 職位關鍵字）或者關鍵字
+pre-score 夠高嘅工，唔計入渠道／track 軟上限，照樣入庫（每渠道另有豁免硬上限
+``priority_extra_max``，防止失控）。
 """
 from __future__ import annotations
 
@@ -19,17 +23,19 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..models import CoverLetter, JobApplication, Profile
 from . import scraper_govhk, scraper_jobsdb, scraper_offertoday
-from .classify import (TrackConfig, known_location_match, parse_keywords,
-                       resolve_general_keywords, resolve_it_keywords,
-                       resolve_non_it_keywords, resolve_wanted_locations,
-                       wanted_location_match)
+from .classify import (TrackConfig, is_priority_job, known_location_match,
+                       parse_keywords, resolve_general_keywords,
+                       resolve_it_keywords, resolve_non_it_keywords,
+                       resolve_wanted_locations, wanted_location_match)
 from .cl_generator import generate_cl_checked
-from .cv_loader import get_cv_text, load_skills
+from .cv_loader import CVError, get_cv_text, load_skills
+from .jobflags import compute_flags
 from .language import detect_language
 from .llm import LLMError
 from .matcher import keyword_score, score_job
 from .scraper_base import get_browser
 from .store import persist_drafts
+from .tuning import load_tuning, priority_keywords
 from .jobdate import is_fresh, parse_posted_date
 from . import scan_control
 
@@ -113,6 +119,15 @@ def load_track_configs(db: Session, only: str | None = None) -> list[TrackConfig
     it_kws = resolve_it_keywords(profile.it_keywords if profile else "")
     non_it_kws = resolve_non_it_keywords(profile.non_it_keywords if profile else "")
     general_kws = resolve_general_keywords(profile.general_job_keywords if profile else "")
+    # 掃描量／高分豁免（Settings 頁 -> .env）
+    t = load_tuning(db)
+    pr_kws = priority_keywords(t)
+    bypass = dict(
+        cap_bypass_enabled=t.cap_bypass_enabled,
+        cap_bypass_min_score=t.cap_bypass_min_score,
+        priority_keywords=pr_kws,
+        priority_extra_max=t.priority_extra_max,
+    )
 
     cfg_it = TrackConfig(
         name="it", label="IT",
@@ -126,7 +141,8 @@ def load_track_configs(db: Session, only: str | None = None) -> list[TrackConfig
             parse_keywords(profile.offertoday_it_search_terms if profile else "")
             or parse_keywords(settings.OFFERTODAY_IT_SEARCH_TERMS)
         ),
-        max_searches=settings.OFFERTODAY_IT_MAX_SEARCHES,
+        max_searches=t.offertoday_it_max_searches,
+        **bypass,
     )
     cfg_general = TrackConfig(
         name="general", label="一般",
@@ -143,7 +159,8 @@ def load_track_configs(db: Session, only: str | None = None) -> list[TrackConfig
             or parse_keywords(settings.OFFERTODAY_GENERAL_SEARCH_TERMS)
             or general_kws
         ),
-        max_searches=settings.OFFERTODAY_GENERAL_MAX_SEARCHES,
+        max_searches=t.offertoday_general_max_searches,
+        **bypass,
     )
 
     tracks: list[TrackConfig] = []
@@ -172,10 +189,82 @@ class ScanSummary:
     backfilled: int = 0
     low_match: int = 0
     details_fetched: int = 0   # JDs fetched (new rows + detail-only backfill)
+    # 高分豁免：因為豁免而收多咗幾多份 / 豁免額滿而仍被擋走幾多份
+    priority_kept: int = 0
+    priority_capped: int = 0
     stopped: bool = False
     errors: list[str] = field(default_factory=list)
     # per-track breakdown for the UI: {track: {scanned, new_jobs, skipped_old, capped}}
     tracks: dict = field(default_factory=dict)
+
+    def as_state(self) -> dict:
+        """掃描摘要 -> JSON-friendly dict（routers/scan.py 記 last scan 用）。"""
+        return {
+            "scanned": self.scanned,
+            "new_jobs": self.new_jobs,
+            "skipped_duplicates": self.skipped_duplicates,
+            "skipped_old": self.skipped_old,
+            "skipped_location": self.skipped_location,
+            "location_uncertain": self.location_uncertain,
+            "capped": self.capped,
+            "enriched": self.enriched,
+            "backfilled": self.backfilled,
+            "low_match": self.low_match,
+            "details_fetched": self.details_fetched,
+            "priority_kept": self.priority_kept,
+            "priority_capped": self.priority_capped,
+            "stopped": self.stopped,
+            "errors": list(self.errors),
+            "tracks": self.tracks,
+        }
+
+
+def _draft_extra_text(d) -> str:
+    """Draft 用嚟做豁免判斷嘅文字（JD／卡片文字，冇就用標題）。"""
+    return (getattr(d, "jd_text", "")
+            or (getattr(d, "raw", None) or {}).get("card_text", "")
+            or getattr(d, "title", ""))
+
+
+def _draft_is_priority(d, skills, cfg: TrackConfig) -> bool:
+    return is_priority_job(getattr(d, "title", ""), _draft_extra_text(d), skills, cfg)
+
+
+def _channel_soft_budget(platform: str, cfg: TrackConfig) -> int:
+    """嗰個渠道今次掃描「本來」可以收幾多份（唔計豁免）。0 = 冇上限。
+
+    OfferToday 係「每個搜尋頁 N 份」，所以乘開幾多個搜尋頁（3 個分類頁 +
+    cfg.max_searches 個關鍵字搜尋）。用嚟計「豁免收多咗幾多份」。
+    """
+    if platform == "govhk_gbayes":
+        return 0                          # 大灣區一向冇上限
+    if platform.startswith("govhk"):
+        return max(0, int(cfg.govhk_max_jobs))
+    if platform == "offertoday":
+        per_search = max(0, int(cfg.offertoday_max_per_search))
+        if per_search <= 0:
+            return 0                      # 每頁不限 = 冇上限
+        searches = (3 + max(0, int(cfg.max_searches))) if cfg.name == "it" \
+            else max(1, int(cfg.max_searches))
+        return per_search * searches
+    return 0
+
+
+def _fair_share(drafts: list, limit: int) -> list:
+    """Round-robin across platforms so one platform can't crowd out others."""
+    buckets: dict[str, list] = {}
+    for d in drafts:
+        buckets.setdefault(d.platform, []).append(d)
+    picked: list = []
+    while len(picked) < limit and buckets:
+        for pf in list(buckets):
+            if buckets[pf]:
+                picked.append(buckets[pf].pop(0))
+            if not buckets[pf]:
+                del buckets[pf]
+            if len(picked) >= limit:
+                break
+    return picked
 
 
 async def run_scan(db: Session, progress: dict | None = None,
@@ -199,6 +288,8 @@ async def run_scan(db: Session, progress: dict | None = None,
         if progress is not None:
             progress.update({"platform": platform, "phase": phase, "count": count})
 
+    tuning = load_tuning(db)
+    skills = load_skills()
     track_cfgs = list(load_track_configs(db, track))
     # 一般 track 嘅「想去嘅地點」白名單（空 = 唔篩）；IT track 唔關事。
     wanted_locations: list[str] = []
@@ -266,6 +357,13 @@ async def run_scan(db: Session, progress: dict | None = None,
                 t_drafts.extend(drafts)
                 summary.scanned += len(drafts)
                 set_progress(platform, f"scraped ({tcfg.label})", len(drafts))
+                # 高分豁免收多咗幾多份：實收份數 - 嗰個渠道原本嘅軟上限預算
+                soft = _channel_soft_budget(platform, tcfg)
+                if tcfg.cap_bypass_enabled and soft > 0 and len(drafts) > soft:
+                    extra = len(drafts) - soft
+                    summary.priority_kept += extra
+                    log.info("%s/%s: 高分豁免收多咗 %s 份（軟上限 %s，實收 %s）",
+                             tcfg.name, platform, extra, soft, len(drafts))
             except Exception as e:  # noqa: BLE001
                 log.exception("scan failed for %s/%s", tcfg.name, platform)
                 summary.errors.append(f"{tcfg.name}/{platform}: {e}")
@@ -303,27 +401,27 @@ async def run_scan(db: Session, progress: dict | None = None,
             kept.append(d)
         t_drafts = kept
 
-        # per-track global cap: at most MAX_SCAN_JOBS drafts, fair-share
-        # round-robin across platforms so one platform can't crowd out others
-        max_jobs = settings.MAX_SCAN_JOBS
+        # per-track global cap (MAX_SCAN_JOBS) —— 用戶要求：高分／優先工唔受呢個
+        # 總上限限制，照樣保留（額外最多 priority_extra_max 份防止失控）；軟上限
+        # 只計其餘嘅工，fair-share round-robin 分配，免得一個平台擠走其他平台。
+        max_jobs = tuning.max_scan_jobs if tuning.max_scan_jobs > 0 else 0
         if max_jobs > 0 and len(t_drafts) > max_jobs:
-            buckets: dict[str, list] = {}
-            for d in t_drafts:
-                buckets.setdefault(d.platform, []).append(d)
-            capped: list = []
-            while len(capped) < max_jobs and buckets:
-                for pf in list(buckets):
-                    if buckets[pf]:
-                        capped.append(buckets[pf].pop(0))
-                    if not buckets[pf]:
-                        del buckets[pf]
-                    if len(capped) >= max_jobs:
-                        break
-            t_capped = len(t_drafts) - len(capped)
+            extra = max(0, tcfg.priority_extra_max) if tcfg.cap_bypass_enabled else 0
+            priority_drafts = ([d for d in t_drafts if _draft_is_priority(d, skills, tcfg)]
+                               if extra else [])
+            keep_priority = priority_drafts[:extra]
+            prio_ids = {id(d) for d in priority_drafts}
+            normal_drafts = [d for d in t_drafts if id(d) not in prio_ids]
+            capped_normal = _fair_share(normal_drafts, max_jobs)
+            dropped_priority = len(priority_drafts) - len(keep_priority)
+            t_capped = (len(normal_drafts) - len(capped_normal)) + dropped_priority
             summary.capped += t_capped
-            log.info("per-scan cap %s (%s track): kept %s of %s drafts",
-                     max_jobs, tcfg.name, len(capped), len(t_drafts))
-            t_drafts = capped
+            summary.priority_kept += len(keep_priority)
+            summary.priority_capped += dropped_priority
+            log.info("per-scan cap %s (%s track): kept %s normal + %s priority of %s drafts",
+                     max_jobs, tcfg.name, len(capped_normal), len(keep_priority),
+                     len(t_drafts))
+            t_drafts = keep_priority + capped_normal
 
         # ensure every draft carries its track category
         for d in t_drafts:
@@ -353,37 +451,50 @@ async def run_scan(db: Session, progress: dict | None = None,
     # When a stop was requested, the drafts scraped so far are already
     # persisted above; skip the (expensive, LLM-heavy) enrich phase entirely.
     if not summary.stopped:
-        budget = settings.MAX_ENRICH_PER_SCAN
+        budget = tuning.max_enrich_per_scan
+        it_ceiling = tuning.max_enrich_it_per_scan
         candidates: list[JobApplication] = []
+        # 用戶要求：「唔係份份工都要評分，只有 IT 工需要」——
+        # ENRICH_GENERAL_JOBS 預設關：一般工唔會入 LLM（唔評分、唔生成 CL、唔寫摘要），
+        # 只做「平價整理」（JD + 語言 + AI／合約／外派標籤 + 關鍵字分數）。
+        cheap_rows: list[JobApplication] = []
         if new_rows:
             # new rows: prioritize by keyword pre-score (cheap, no LLM)
-            skills = load_skills()
             scored = []
             for row in new_rows:
                 pre = keyword_score(row.title, row.jd_text, skills)
                 row.match_score = pre  # provisional; LLM re-scores if enriched
                 scored.append((pre, row))
             scored.sort(key=lambda x: x[0], reverse=True)
-            candidates = [r for _, r in scored]
-            summary.low_match = sum(1 for s, r in scored if s < settings.MATCH_THRESHOLD)
-            if settings.ENRICH_ALL_IT:
-                # 用戶要求：所有新 IT 工都要 LLM 完整評分（唔限）；一般工維持 top-N。
-                it_rows = [r for r in candidates if r.category == "it"]
-                gen_rows = [r for r in candidates if r.category == "general"][:max(0, budget)]
-                candidates = it_rows + gen_rows
+            ordered = [r for _, r in scored]
+            it_rows = [r for r in ordered if r.category == "it"]
+            gen_rows = [r for r in ordered if r.category != "it"]
+            if tuning.enrich_all_it:
+                # 用戶要求：所有新 IT 工都要 LLM 完整評分（唔限）。
+                # MAX_ENRICH_IT_PER_SCAN 可以設一個安全上限（0 = 唔限）。
+                it_rows = it_rows[:it_ceiling] if it_ceiling > 0 else it_rows
             else:
-                candidates = candidates[: max(0, budget)]
+                it_rows = it_rows[: max(0, budget)]
+            if tuning.enrich_general_jobs:
+                gen_rows = gen_rows[: max(0, budget)]
+            else:
+                cheap_rows = gen_rows          # 唔入 LLM，下面做平價整理
+                gen_rows = []
+            candidates = it_rows + gen_rows
+            cheap_ids = {r.id for r in cheap_rows}
+            summary.low_match = sum(
+                1 for pre, r in scored
+                if pre < settings.MATCH_THRESHOLD and r.id not in cheap_ids)
 
         # ---- A. fetch the full JD for EVERY new row (no LLM) ----
         # The user wants the whole board to carry a description, not just the
         # LLM-budget top-N. Detail fetch also reveals the OfferToday datePosted,
         # so stale jobs get dropped here like scan-time freshness filtering.
         sem = asyncio.Semaphore(6)
-        # Politeness: 每份工之間隔至少 4 秒（隨機 4–6 秒），shared across
-        # every phase of this scan (new rows, backfill, enrich). OfferToday 最怕
-        # request burst（anti-WAF），所以唔好快過 4 秒。
-        pace = _PaceGate(settings.SCAN_JOB_DELAY_MIN_SECONDS,
-                         settings.SCAN_JOB_DELAY_MAX_SECONDS)
+        # Politeness: 每份工之間隔至少 N 秒（預設隨機 4–6 秒，設定頁可調），
+        # shared across every phase of this scan（new rows／backfill／enrich）。
+        # OfferToday 最怕 request burst（anti-WAF），所以唔好快過 4 秒。
+        pace = _PaceGate(tuning.scan_job_delay_min, tuning.scan_job_delay_max)
         dropped_ids: set[int] = set()
         dropped_by_track: dict[str, int] = {}
         fetch_count = {"n": 0}
@@ -392,9 +503,9 @@ async def run_scan(db: Session, progress: dict | None = None,
             """攞一份工嘅完整 JD。
 
             用戶要求：新工入庫時就要連 JD 一齊攞到，所以如果中途出錯（例如
-            CDP／瀏覽器一閃）會自動重試，重試之前照跟 4–6 秒 pacing，唔會
-            突然連環開頁。試完都失敗先記錄落 errors，卡片會顯示「未有 JD」，
-            你想睇就逐份撳「🔄 更新 JD」。
+            CDP／瀏覽器一閃）會自動重試，重試之前照跟 pacing，唔會突然連環
+            開頁。試完都失敗先記錄落 errors，卡片會顯示「未有 JD」，你想睇就
+            逐份撳「🔄 更新 JD」。
             """
             async with sem:
                 for attempt in range(1, attempts + 1):
@@ -449,6 +560,14 @@ async def run_scan(db: Session, progress: dict | None = None,
         if new_rows:
             await asyncio.gather(*(fill_detail(r) for r in new_rows))
             candidates = [r for r in candidates if r.id not in dropped_ids]
+            # 一般工（冇 LLM）：JD 已經攞到，做平價整理就入庫，唔洗 API 錢
+            for row in cheap_rows:
+                if row.id in dropped_ids:
+                    continue
+                _cheap_enrich(row)
+                summary.enriched += 1
+            if cheap_rows:
+                db.flush()
             if dropped_ids:
                 summary.new_jobs = max(0, summary.new_jobs - len(dropped_ids))
                 for tname, n in dropped_by_track.items():
@@ -468,7 +587,7 @@ async def run_scan(db: Session, progress: dict | None = None,
             async with sem:
                 try:
                     set_progress(platform, f"enriching ({kind})", row.title[:40])
-                    dropped = await _enrich_one(db, row, platform, fetch_detail, load_skills(), pace=pace)
+                    dropped = await _enrich_one(db, row, platform, fetch_detail, skills, pace=pace)
                     if dropped:
                         # OfferToday datePosted revealed the job is stale
                         # (> MAX_JOB_AGE_DAYS) — treat it like scan-time filtering.
@@ -560,8 +679,39 @@ async def _fill_detail(db: Session, row: JobApplication, fetch_detail,
     if draft.external_url:
         row.external_url = draft.external_url
         row.apply_method = "external_link"
+    _refresh_flags(row)
     db.flush()
     return False
+
+
+# 一般工未評分嘅標示（UI 會顯示「未評分」chip；詳情頁可以逐份撳「重新整理」補評分）
+UNSCORED_REASON = "未 LLM 評分（一般工預設省 API；喺詳情頁撳「重新整理」就可以即刻評分）"
+
+
+def _cheap_enrich(row: JobApplication) -> None:
+    """零 LLM 成本嘅入庫整理：語言、AI／合約／外派標籤、去重 key、狀態、標示。
+
+    用戶要求：一般工唔需要 LLM 評分（只有 IT 工要）。所以呢啲工照樣入職位台、
+    照樣有 JD 同標籤，但 `match_score` 係關鍵字分數、`match_level` 留空、
+    亦唔會預先生成 CL（想投嘅時候撳「申請」會即場生成，或者詳情頁手動生成）。
+    """
+    row.jd_language = detect_language(row.jd_text or row.title)
+    _refresh_flags(row)
+    if row.company and row.title:
+        row.dup_key = make_dup_key(row.company, row.title)
+    if row.status != "applied":
+        # 保留喺職位台（唔會因為「未評分」而被當 low_match 隱藏）
+        row.status = "pending_review"
+    row.match_reason = UNSCORED_REASON
+    row.match_level = ""
+
+
+def _refresh_flags(row) -> None:
+    """重算 AI／合約／外派 flag（攞到 JD 之後會更準）。"""
+    flags = compute_flags(row)
+    row.ai_match = flags["ai_match"]
+    row.is_contract = flags["is_contract"]
+    row.is_agency = flags["is_agency"]
 
 
 def _fetch_detail_for(platform: str):
@@ -592,6 +742,23 @@ def _backfill_candidates(db: Session, limit: int) -> list[JobApplication]:
     )
 
 
+def unscored_it_candidates(db: Session, limit: int) -> list[JobApplication]:
+    """未評分嘅 IT 工（match_score = 0 又未投）—— 「補齊未評分 IT 工」用。
+
+    舊資料好多 IT 工從來冇入過 LLM（scan 預算用喺其他地方），分數永遠係 0，
+    排序上永遠沉底。呢個 query 就係為咗一次過補返。
+    """
+    return (
+        db.query(JobApplication)
+        .filter(JobApplication.category == "it",
+                JobApplication.match_score == 0,
+                JobApplication.status != "applied")
+        .order_by(JobApplication.created_at.asc())
+        .limit(limit)
+        .all()
+    )
+
+
 async def _enrich_one(db: Session, row: JobApplication, platform: str,
                       fetch_detail, skills: list[str],
                       pace: _PaceGate | None = None) -> bool:
@@ -610,9 +777,11 @@ async def _enrich_one(db: Session, row: JobApplication, platform: str,
         "salary_range": row.salary_range, "jd_text": row.jd_text,
         "short_desc": "",
     }
-    score, reason = await score_job(job_dict, skills)
+    score, reason, level = await score_job(job_dict, skills)
     row.match_score = score
     row.match_reason = reason
+    row.match_level = level
+    _refresh_flags(row)
     if row.company and row.title:
         row.dup_key = make_dup_key(row.company, row.title)
     db.flush()
@@ -620,7 +789,7 @@ async def _enrich_one(db: Session, row: JobApplication, platform: str,
     if score < settings.MATCH_THRESHOLD:
         row.status = "low_match"
         db.flush()
-        return
+        return False
 
     # 2. generate CL (with quality check + one retry)
     try:
@@ -639,8 +808,10 @@ async def _enrich_one(db: Session, row: JobApplication, platform: str,
         version = (existing.version + 1) if existing else 1
         db.add(CoverLetter(application_id=row.id, language=row.jd_language,
                            content=content, version=version))
-    except LLMError:
-        log.warning("CL generation failed for %s/%s (score kept)", platform, row.job_id_on_platform)
+    except (LLMError, CVError) as e:
+        # 冇 LLM key 或者未設定 CV：唔應該令評分／入庫失敗，只係冇 CL
+        log.warning("CL generation skipped for %s/%s (score kept): %s",
+                    platform, row.job_id_on_platform, e)
     row.status = "pending_review"
     db.flush()
 

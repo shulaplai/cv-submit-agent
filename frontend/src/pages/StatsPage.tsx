@@ -14,7 +14,7 @@ import {
 } from "recharts";
 import { api } from "../api";
 import { PLATFORM_LABEL, STATUS_LABEL } from "../types";
-import type { Stats } from "../types";
+import type { FunnelRow, Stats } from "../types";
 
 const PLATFORM_COLORS: Record<string, string> = {
   jobsdb: "#c8102e",
@@ -24,6 +24,55 @@ const PLATFORM_COLORS: Record<string, string> = {
   govhk_general: "#6b8f4e",
   govhk: "#d93b26",
 };
+
+function FunnelTable({ title, note, rows }: { title: string; note: string; rows: FunnelRow[] }) {
+  const hasData = rows.some((r) => r.applied > 0);
+  return (
+    <div className="chart-wrap">
+      <h4>{title}</h4>
+      <div className="note-inline" style={{ marginBottom: 8 }}>{note}</div>
+      <table className="ledger">
+        <thead>
+          <tr>
+            <th>組別</th>
+            <th>已投</th>
+            <th>有回覆</th>
+            <th>面試</th>
+            <th>冇回音</th>
+            <th>落選</th>
+            <th>Offer</th>
+            <th>未更新</th>
+            <th>回覆率</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.key}>
+              <td>{r.label}</td>
+              <td>
+                <b>{r.applied}</b>
+              </td>
+              <td>{r.responded}</td>
+              <td>{r.interviewing}</td>
+              <td>{r.no_response}</td>
+              <td>{r.rejected}</td>
+              <td>{r.offer}</td>
+              <td style={{ opacity: 0.7 }}>{r.pending}</td>
+              <td style={{ fontFamily: "var(--mono)" }}>
+                {r.applied ? `${r.response_rate}%` : "—"}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {!hasData && (
+        <div className="note-inline" style={{ marginTop: 8 }}>
+          暫時未有已投遞記錄。投完之後喺職位詳情頁撳「面試中／冇回音／落選／Offer」就會入呢張表。
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function StatsPage() {
   const [stats, setStats] = useState<Stats | null>(null);
@@ -120,6 +169,22 @@ export function StatsPage() {
             </BarChart>
           </ResponsiveContainer>
         </div>
+
+        <FunnelTable
+          title="結果漏斗：IT vs 一般"
+          note="用嚟答「邊條軌值得繼續投」：回覆率 = （面試中＋落選＋Offer）÷ 已投。"
+          rows={stats.funnel_by_category ?? []}
+        />
+        <FunnelTable
+          title="結果漏斗：AI vs 非 AI"
+          note="AI 相關職位（標題或 JD 提到 AI）同其他職位嘅回覆率比較。"
+          rows={stats.funnel_by_ai ?? []}
+        />
+        <FunnelTable
+          title="結果漏斗：按匹配度"
+          note="睇下高分（≥65）係唔係真係有較高回覆率 —— 決定要唔要繼續收窄。"
+          rows={stats.funnel_by_score ?? []}
+        />
 
         <div className="chart-wrap">
           <h4>每週投遞一覽</h4>

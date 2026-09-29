@@ -31,6 +31,7 @@ export function JobDetail({
   const [note, setNote] = useState<{ text: string; kind: string } | null>(null);
   const [applyResult, setApplyResult] = useState<ApplyResult | null>(null);
   const [emailDraft, setEmailDraft] = useState<EmailPreview | null>(null);
+  const [showRawEmail, setShowRawEmail] = useState(false);   // 睇未潤色原文
   const [templates, setTemplates] = useState<EmailTemplate[]>([]);
   const [templateKey, setTemplateKey] = useState("standard");
   const [notes, setNotes] = useState(job.notes);
@@ -228,6 +229,20 @@ export function JobDetail({
     }
   };
 
+  // 一撳記錄結果（面試中／冇回音／落選／Offer）—— 統計頁嘅漏斗就靠呢啲
+  const setJobStatus = async (status: string) => {
+    setBusy(true);
+    try {
+      await api.updateJob(job.id, { status });
+      await refresh(job.id);
+      showNote("已記錄結果。", "ok");
+    } catch (e) {
+      showNote(`更新失敗: ${(e as Error).message}`, "err");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const saveMeta = async () => {
     setBusy(true);
     try {
@@ -280,6 +295,21 @@ export function JobDetail({
         <span>match {job.match_score}/100</span>
         {job.posted_at && <span>刊登 {job.posted_at}</span>}
         <span>入庫 {fmtDate(job.created_at)}</span>
+        {job.ai_match && <span className="chip ok" title="AI 相關職位（標題或 JD）">✦ AI</span>}
+        {job.is_contract && (
+          <span className="chip low" title="合約／臨時／兼職／實習">合約／臨時</span>
+        )}
+        {job.is_agency && (
+          <span className="chip low" title="外派／獵頭／人力資源公司">外派／獵頭</span>
+        )}
+        {job.match_level && (
+          <span className={`chip ${job.match_level === "fit" ? "ok" : "low"}`} title={job.match_reason}>
+            {job.match_level === "fit" ? "✓ 資歷啱" : job.match_level === "over" ? "資歷超出" : "資歷有餘"}
+          </span>
+        )}
+        <span className="chip" title="申請時會交邊份 CV（跟職位標題揀版本）">
+          CV：{job.cv_variant || "通用版"}
+        </span>
       </div>
       {job.match_reason && (
         <div className="note-inline">匹配理由：{job.match_reason}</div>
@@ -293,6 +323,12 @@ export function JobDetail({
       {isGBA && (
         <div className="note-inline" style={{ borderStyle: "solid", borderColor: "var(--gold)" }}>
           ⚠ 大灣區青年就業計劃職位：須 29 歲或以下、副學位或以上學歷、可合法喺香港及內地受僱。
+        </div>
+      )}
+      {job.offertoday_intro_polished && (
+        <div className="note-inline" style={{ borderStyle: "solid", borderColor: "var(--teal)" }}>
+          <b style={{ color: "var(--teal)" }}>✨ 上次發出嘅自我介紹（已 AI 潤色）：</b>
+          <div style={{ marginTop: 4 }}>{job.offertoday_intro_polished}</div>
         </div>
       )}
       {job.contact_email && (
@@ -444,6 +480,27 @@ export function JobDetail({
           <div className="note-inline" style={{ borderStyle: "solid" }}>
             <div style={{ fontWeight: 600, marginBottom: 6 }}>
               Email 預覽 — {effectiveAuto ? "確認後會自動發送" : "確認後會開 Mail draft 俾你手動發送"}
+              {emailDraft.polished ? (
+                <>
+                  {" "}
+                  <span className="chip ok" title="寄出前會用 AI 潤色一次（稱呼／簽名保留）">
+                    ✨ 內文已 AI 潤色
+                  </span>{" "}
+                  {emailDraft.body_original && (
+                    <button
+                      className="chip-btn"
+                      style={{ marginLeft: 6 }}
+                      onClick={() => setShowRawEmail((v) => !v)}
+                    >
+                      {showRawEmail ? "睇潤色版" : "睇原文"}
+                    </button>
+                  )}
+                </>
+              ) : (
+                <span className="chip" style={{ marginLeft: 6 }} title="潤色失敗或者喺設定頁關咗；寄出嘅就係原文">
+                  原文（未潤色）
+                </span>
+              )}
             </div>
             {templates.length > 0 && (
               <div style={{ marginBottom: 8 }}>
@@ -475,7 +532,7 @@ export function JobDetail({
               {emailDraft.attachment || "（未設定 CV 路徑）"}
               <br />
               <b>內文：</b>
-              {emailDraft.body}
+              {showRawEmail && emailDraft.body_original ? emailDraft.body_original : emailDraft.body}
             </div>
             <div className="btnrow" style={{ marginTop: 10 }}>
               <button className="btn primary" onClick={confirmEmailApply} disabled={busy}>
@@ -518,6 +575,34 @@ export function JobDetail({
             <option value="technical">技術測試</option>
             <option value="offer_discussion">傾 offer</option>
           </select>
+        </div>
+        <div className="field">
+          <label>結果（會入統計漏斗）</label>
+          <div className="btnrow" style={{ flexWrap: "wrap" }}>
+            {(
+              [
+                ["interviewing", "面試中"],
+                ["no_response", "冇回音"],
+                ["rejected", "落選"],
+                ["offer", "Offer"],
+                ["applied", "改返已投遞"],
+              ] as const
+            ).map(([value, label]) => (
+              <button
+                key={value}
+                className={`chip-btn ${job.status === value ? "active" : ""}`}
+                onClick={() => setJobStatus(value)}
+                disabled={busy}
+                title={
+                  value === "no_response"
+                    ? "投咗／面試完之後一直冇回音"
+                    : "更新狀態（順便記錄結果時間）"
+                }
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
         <div className="field">
           <label>備註</label>

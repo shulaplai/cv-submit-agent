@@ -61,6 +61,13 @@ class Settings(BaseSettings):
     # (uncapped — the user's choice); 一般 jobs keep the MAX_ENRICH_PER_SCAN
     # budget. Set false to fall back to the shared top-N budget for both tracks.
     ENRICH_ALL_IT: bool = True
+    # Safety ceiling for the IT-track full-enrichment above (per scan).
+    # 0 = 唔設上限（用戶要求：唔限）。設定大過 0 就係「每 scan 最多評分幾多份新 IT 工」。
+    MAX_ENRICH_IT_PER_SCAN: int = 0
+    # 用戶要求：「唔係份份工都要評分，只有 IT 工需要」——
+    # 預設關：一般工只收 JD + 關鍵字分數 + AI／合約／外派標籤（零 LLM，唔會生成 CL），
+    # 只有 IT 工先入 LLM 完整評分。想逐份評分可以喺詳情頁撳「重新整理」或者用「補齊」。
+    ENRICH_GENERAL_JOBS: bool = False
     # Politeness pacing: 每份工之間隔至少 SCAN_JOB_DELAY_MIN_SECONDS 秒，
     # 上限 SCAN_JOB_DELAY_MAX_SECONDS —— 每次 wait 隨機抽 4–6 秒（人類化、
     # 唔好俾 OfferToday 嘅 anti-WAF 見到固定節奏）。0 = disable.
@@ -79,20 +86,32 @@ class Settings(BaseSettings):
     # gov.hk 大灣區青年就業計劃: 淨係收刊登日期喺一個星期（7 日）之內嘅工。
     GBAY_MAX_JOB_AGE_DAYS: int = 7
     # gov.hk 資訊及科技界: only the first N jobs per scan (list is newest-first).
-    GOVHK_IT_MAX_JOBS: int = 50
+    GOVHK_IT_MAX_JOBS: int = 120
     # Optional global cap on total jobs kept per scan, per track
     # (fair-share round-robin across platforms within the track).
     # 0 = no global cap; per-channel caps govern.
     MAX_SCAN_JOBS: int = 0
+    # ------------------------------------------------------------------
+    # 高分豁免上限（用戶要求）：評級好高嘅職位無視渠道／總量上限，照樣入庫。
+    # 判斷喺 list 階段做（標題 + 卡片文字 + 技能清單，零 LLM 成本）：
+    #   標題命中 PRIORITY 字詞（預設 = AI 職位關鍵字）  或
+    #   keyword pre-score >= CAP_BYPASS_MIN_SCORE
+    # PRIORITY_EXTRA_MAX = 每個渠道每次掃描最多豁免收幾多份（防止失控）。
+    # ------------------------------------------------------------------
+    CAP_BYPASS_ENABLED: bool = True
+    CAP_BYPASS_MIN_SCORE: int = 70
+    PRIORITY_EXTRA_MAX: int = 50
     # OfferToday: each search result (資訊科技/工程師/科技 + keyword searches)
     # contributes at most this many drafts per scan. Set 0 for no cap.
-    OFFERTODAY_MAX_PER_SEARCH: int = 80
+    OFFERTODAY_MAX_PER_SEARCH: int = 150
     # OfferToday IT track: extra keyword searches on top of the 3 category pages
     # (e.g. "AI Agent,人工智能,大模型" — main focus is IT / AI agent jobs).
     # Each term becomes one <term>-jobs search page. Empty -> category pages only.
-    OFFERTODAY_IT_SEARCH_TERMS: str = ""
+    OFFERTODAY_IT_SEARCH_TERMS: str = (
+        "AI Agent,人工智能,大模型,AI,Machine Learning,LLM,GenAI,Prompt Engineering"
+    )
     # Max number of those extra IT keyword searches per scan.
-    OFFERTODAY_IT_MAX_SEARCHES: int = 4
+    OFFERTODAY_IT_MAX_SEARCHES: int = 10
     GOAL_APPLICATIONS_PER_WEEK: int = 15
     GOVHK_ENABLED: bool = True
     # JobsDB is hidden for now (semi-auto flow pending); set true to re-enable.
@@ -116,12 +135,12 @@ class Settings(BaseSettings):
     GENERAL_WANTED_LOCATIONS: str = ""
     # gov.hk 一般 track: the main quickview (ALL vacancy categories, newest
     # first) filtered by the general keywords; at most N jobs per scan.
-    GOVHK_GENERAL_MAX_JOBS: int = 20
+    GOVHK_GENERAL_MAX_JOBS: int = 80
     # OfferToday 一般 track: keyword searches (<kw>-jobs); at most this many
     # drafts per keyword search, and at most OFFERTODAY_GENERAL_MAX_SEARCHES
     # keyword searches per scan.
-    OFFERTODAY_GENERAL_MAX_PER_SEARCH: int = 15
-    OFFERTODAY_GENERAL_MAX_SEARCHES: int = 8
+    OFFERTODAY_GENERAL_MAX_PER_SEARCH: int = 40
+    OFFERTODAY_GENERAL_MAX_SEARCHES: int = 12
     # Comma-separated override of the OfferToday general-track search terms
     # (each becomes one search page). Empty -> use the general keywords.
     OFFERTODAY_GENERAL_SEARCH_TERMS: str = ""
@@ -130,6 +149,16 @@ class Settings(BaseSettings):
     # True = agent fills the form AND clicks submit / sends the email itself.
     # The UI (settings) and per-job manual mode can override this.
     AUTO_SUBMIT: bool = True
+
+    # --- 發送前 AI 潤色（用戶要求）---
+    # Email（gov.hk 等 email 申請）：寄出前將整封內文潤色一次（稱呼／簽名保留），
+    # 令封信唔會讀落似 AI 拼砌。潤色失敗一律用原文寄出，唔會漏寄。
+    EMAIL_POLISH_ENABLED: bool = True
+    # 額外潤色指示（可以留空；會 append 落預設指示後面）
+    EMAIL_POLISH_INSTRUCTIONS: str = ""
+    # OfferToday：發完 CV 之後嗰段自我介紹，發送前同樣潤色一次。
+    INTRO_POLISH_ENABLED: bool = True
+    INTRO_POLISH_INSTRUCTIONS: str = ""
 
     # --- OfferToday pre-uploaded resume picking ---
     # OfferToday sends a resume already uploaded to the account (via the

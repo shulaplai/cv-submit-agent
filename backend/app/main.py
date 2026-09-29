@@ -59,12 +59,18 @@ def _start_catchup_if_stale() -> None:
 def build_scheduler() -> "AsyncIOScheduler | None":
     """建立掃描排程（None = 停用）。
 
+    時／日間隔跟 Settings 頁（profile）-> .env：用戶喺設定頁改「掃描時間」
+    即時生效（`reschedule()` 會重建 job），唔使改 .env 重啟。
+
     ⚠ APScheduler 預設 misfire_grace_time = 1 秒：部 Mac 睡醒／時鐘差少少就會
     當「錯過」直接跳過。實測 2026-09-24、09-26 兩晚就係被 1.12 秒 grace 跳過，
     而且冇 catch-up -> 「每兩晚 03:00 scan」實際上冇跑過。呢度放寬到
     SCAN_MISFIRE_GRACE_SECONDS。
     """
-    if settings.SCAN_DAY_INTERVAL <= 0:
+    from .services.tuning import load_tuning
+
+    t = load_tuning()
+    if t.scan_day_interval <= 0:
         return None
     sched = AsyncIOScheduler(job_defaults={
         "misfire_grace_time": settings.SCAN_MISFIRE_GRACE_SECONDS,
@@ -75,13 +81,52 @@ def build_scheduler() -> "AsyncIOScheduler | None":
         _scheduled_scan,
         # 雙日錨定（2-31/2）而唔係 */2（單日）：確保「下次」就係今晚凌晨，
         # 之後每兩日凌晨 SCAN_HOUR 照跑（*/2 會喺單數日，跳過今晚）。
-        CronTrigger(day=f"2-31/{settings.SCAN_DAY_INTERVAL}", hour=settings.SCAN_HOUR),
+        CronTrigger(day=f"2-31/{t.scan_day_interval}", hour=t.scan_hour),
         id="scan_jobs",
         misfire_grace_time=settings.SCAN_MISFIRE_GRACE_SECONDS,
         coalesce=True,
         max_instances=1,
     )
     return sched
+
+
+def reschedule() -> dict:
+    """設定頁改咗掃描時間／間隔 -> 即刻重建排程。回傳新排程資訊俾 UI。"""
+    from .services.tuning import load_tuning
+
+    global _scheduler
+    t = load_tuning()
+    if _scheduler is not None:
+        try:
+            _scheduler.remove_job("scan_jobs")
+        except Exception:  # noqa: BLE001 — job 可能未加過
+            pass
+        if t.scan_day_interval <= 0:
+            _scheduler.shutdown(wait=False)
+            _scheduler = None
+            return {"enabled": False, "next_run": None,
+                    "scan_hour": t.scan_hour, "scan_day_interval": t.scan_day_interval}
+    if _scheduler is None and t.scan_day_interval > 0:
+        _scheduler = build_scheduler()
+        if _scheduler is not None:
+            _scheduler.start()
+    if _scheduler is None:
+        return {"enabled": False, "next_run": None,
+                "scan_hour": t.scan_hour, "scan_day_interval": t.scan_day_interval}
+    job = _scheduler.get_job("scan_jobs")
+    if job is None:
+        _scheduler.add_job(
+            _scheduled_scan,
+            CronTrigger(day=f"2-31/{t.scan_day_interval}", hour=t.scan_hour),
+            id="scan_jobs", misfire_grace_time=settings.SCAN_MISFIRE_GRACE_SECONDS,
+            coalesce=True, max_instances=1,
+        )
+        job = _scheduler.get_job("scan_jobs")
+    next_run = getattr(job, "next_run_time", None)
+    log.info("scheduled scan rebuilt: every %s days at %02d:00 (next: %s)",
+             t.scan_day_interval, t.scan_hour, next_run)
+    return {"enabled": True, "next_run": str(next_run) if next_run else None,
+            "scan_hour": t.scan_hour, "scan_day_interval": t.scan_day_interval}
 
 
 @asynccontextmanager
@@ -91,9 +136,12 @@ async def lifespan(app: FastAPI):
     _scheduler = build_scheduler()
     if _scheduler is not None:
         _scheduler.start()
+        from .services.tuning import load_tuning
+
+        t = load_tuning()
         next_run = _scheduler.get_job("scan_jobs").next_run_time
         log.info("scheduled scan: every %s days at %02d:00 (next: %s, grace: %ss)",
-                 settings.SCAN_DAY_INTERVAL, settings.SCAN_HOUR, next_run,
+                 t.scan_day_interval, t.scan_hour, next_run,
                  settings.SCAN_MISFIRE_GRACE_SECONDS)
         _start_catchup_if_stale()
     yield
