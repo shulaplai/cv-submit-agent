@@ -37,11 +37,9 @@ class Settings(BaseSettings):
     CV_DEVELOPER_ZH_PATH: str = ""
     # 「AI 職位」判斷：只睇職位標題（用戶揀咗保守做法）。逗號分隔，不分大小寫；
     # 拉丁字用詞邊界比對，所以 "ai" 唔會誤中 "email"/"detail"。
-    CV_AI_TITLE_KEYWORDS: str = (
-        "ai,artificial intelligence,人工智能,機器學習,machine learning,"
-        "深度學習,deep learning,llm,大模型,nlp,自然語言處理,電腦視覺,"
-        "computer vision,生成式,genai,ai agent,算法"
-    )
+    # 用戶要求（2026-10）：AI 相關只認「AI」同「agent」兩個字眼
+    # （大模型／機器學習呢啲唔需要）——亦可以喺設定頁改。
+    CV_AI_TITLE_KEYWORDS: str = "ai,agent"
 
     # --- Job targeting ---
     JOB_KEYWORDS: str = "AI Engineer,agent developer,AI developer,developer,programmer,frontend developer,資訊科技工程師,AI 工程師,AI基礎架構"
@@ -112,6 +110,27 @@ class Settings(BaseSettings):
     )
     # Max number of those extra IT keyword searches per scan.
     OFFERTODAY_IT_MAX_SEARCHES: int = 10
+    # ------------------------------------------------------------------
+    # AI 搜尋組（用戶要求）：用高精度字詞專門搵 AI／agent 工，並幫佢哋設
+    # 7 日嘅刊登日期上限；一遇到過期就停嗰個字詞／渠道（可設定為停成個 scan）。
+    # 呢組嘅工「一定要收」——標題命中就會無視渠道／track 上限（高分豁免）。
+    # ------------------------------------------------------------------
+    # AI 搜尋字詞（每個字詞 = OfferToday 一個 <term>-jobs 搜尋頁）
+    AI_SEARCH_TERMS: str = "agent,AI"
+    # AI 組每次掃描最多開幾多個搜尋頁
+    AI_SEARCH_MAX_SEARCHES: int = 8
+    # AI 組嘅工必須喺幾日內刊登（0 = 唔限）
+    AI_SEARCH_MAX_AGE_DAYS: int = 7
+    # 遇到過期嘅 AI 工點做：channel = 停該字詞／渠道繼續其他；scan = 暫停成個掃描
+    AI_STALE_ACTION: str = "channel"
+
+    # --- 批量 AI 檢查（LLM 分批判斷 IT／非 IT）---
+    # 每批幾多份職位做一次 LLM call（越多越省錢，但單次 prompt 越長）
+    AI_CHECK_BATCH_SIZE: int = 40
+    # 一次「批量 AI 檢查」最多檢查幾多份
+    AI_CHECK_LIMIT: int = 200
+    # 掃描完自動做一次（預設唔開：唔想偷偷洗錢）
+    AI_CHECK_AFTER_SCAN: bool = False
     GOAL_APPLICATIONS_PER_WEEK: int = 15
     GOVHK_ENABLED: bool = True
     # JobsDB is hidden for now (semi-auto flow pending); set true to re-enable.
@@ -159,6 +178,22 @@ class Settings(BaseSettings):
     # OfferToday：發完 CV 之後嗰段自我介紹，發送前同樣潤色一次。
     INTRO_POLISH_ENABLED: bool = True
     INTRO_POLISH_INSTRUCTIONS: str = ""
+
+    # --- 自動寄 email（SMTP）---
+    # macOS Mail 嘅 AppleScript 路徑要「自動化權限」（TCC 跟邊個 app 叫 Mail），
+    # 由背景服務／agent 跑通常冇權限（-10004）。SMTP 直接由 Python 寄，
+    # **完全唔需要 macOS 權限**，內文同 CV 附件都係自動填好、自動寄出。
+    # SEND_METHOD: smtp（有填 SMTP 就用）/ mail（AppleScript）/ auto（有 SMTP 用 SMTP，冇就用 Mail）
+    SEND_METHOD: str = "auto"
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""          # Gmail／iCloud 要填「應用程式密碼」
+    SMTP_FROM_NAME: str = ""         # 顯示名（留空 = 用 APPLICANT_NAME）
+    SMTP_FROM_EMAIL: str = ""        # 寄件人（留空 = 用 SMTP_USER）
+    SMTP_USE_SSL: bool = False       # 465 = True（SSL）；587 = False（STARTTLS）
+    # 寄每封申請信嘅時候，BCC 一份去自己（SMTP_FROM_EMAIL）做備份
+    SMTP_BCC_SELF: bool = True
 
     # --- OfferToday pre-uploaded resume picking ---
     # OfferToday sends a resume already uploaded to the account (via the

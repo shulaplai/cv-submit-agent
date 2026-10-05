@@ -19,18 +19,32 @@ from app.services.cv_loader import (
 
 # ------------------------------------------------------------ AI 標題判斷
 
+# 用戶要求（2026-10）：AI 相關只認「AI」同「agent」兩個字眼
+# （大模型／機器學習／LLM／Computer Vision 等等唔再自動當 AI；要嘅話
+#  喺設定頁「AI 相關字眼」加返）。
 @pytest.mark.parametrize("title", [
     "AI Engineer",
     "AI Agent Developer",
-    "大模型算法工程師",
-    "機器學習工程師",
-    "Senior LLM Engineer",
-    "Computer Vision Engineer",
+    "Agentic AI Engineer",
+    "Senior AI Developer",
     "AI Specialist",
     "生成式 AI 研究員",
+    "AI應用工程師",
 ])
 def test_ai_titles(title):
     assert title_is_ai(title) is True
+
+
+@pytest.mark.parametrize("title", [
+    "大模型算法工程師",       # 冇 AI／agent 字眼 -> 唔當 AI（但照樣係 IT 工）
+    "機器學習工程師",
+    "Senior LLM Engineer",
+    "Computer Vision Engineer",
+    "Python Programmer",      # 普通 programmer 唔算 AI
+])
+
+def test_ml_titles_without_ai_word_are_not_ai(title):
+    assert title_is_ai(title) is False
 
 
 @pytest.mark.parametrize("title", [

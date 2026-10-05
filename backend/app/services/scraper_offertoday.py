@@ -35,18 +35,40 @@ SALARY_RE = re.compile(r"(?:HK\s*\$|HK\$)?\s*\$?[\d,]+(?:K|M)?\s*(?:-\s*\$?[\d,]
 DATEPOSTED_RE = re.compile(r'"datePosted"\s*:\s*"(\d{4}-\d{2}-\d{2})"')
 
 
-def _search_urls_for(cfg: TrackConfig) -> list[str]:
-    """Per-track search URLs.
+def _search_targets(cfg: TrackConfig) -> list[tuple[str, str, bool]]:
+    """[(url, 搜尋字詞／分類頁名, 係唔係 AI 搜尋組)].
 
-    IT: the 3 category pages PLUS extra keyword searches (AI Agent 等 —
-    cfg.offertoday_search_terms, at most cfg.max_searches of them).
-    general: keyword searches only (at most cfg.max_searches of them).
+    IT track：
+      1. 3 個技術分類頁（資訊科技／工程師／科技）
+      2. **AI 搜尋組**（cfg.ai_search_terms，例如 agent／AI）—— 獨立預算，唔會
+         同其他字詞爭，而且呢組嘅工有 7 日刊登日期限制（見 scanner）
+      3. 其他 IT 關鍵字搜尋（cfg.offertoday_search_terms，會剔走 AI 組已用嘅字詞）
+    general track：只有關鍵字搜尋。
     """
-    if cfg.name == "it":
-        terms = (cfg.offertoday_search_terms or [])[: cfg.max_searches or len(cfg.offertoday_search_terms or [])]
-        return list(SEARCH_URLS) + [f"{BASE}/hk/search/{quote(term)}-jobs" for term in terms]
-    terms = (cfg.offertoday_search_terms or cfg.keywords)[: cfg.max_searches or len(cfg.keywords)]
-    return [f"{BASE}/hk/search/{quote(term)}-jobs" for term in terms]
+    from .tuning import is_ai_search_query
+
+    if cfg.name != "it":
+        terms = (cfg.offertoday_search_terms or cfg.keywords)[
+            : cfg.max_searches or len(cfg.keywords)]
+        return [(f"{BASE}/hk/search/{quote(t)}-jobs", t, False) for t in terms]
+
+    targets: list[tuple[str, str, bool]] = [(u, "category", False) for u in SEARCH_URLS]
+    ai_terms = (cfg.ai_search_terms or [])[
+        : cfg.ai_search_max_searches or len(cfg.ai_search_terms or [])]
+    for term in ai_terms:
+        targets.append((f"{BASE}/hk/search/{quote(term)}-jobs", term, True))
+    # 其他字詞：剔走已經做過 AI 組嘅字詞（唔想同一個字詞開兩次）
+    other = [t for t in (cfg.offertoday_search_terms or [])
+             if not is_ai_search_query(t)]
+    other = other[: cfg.max_searches or len(other)]
+    for term in other:
+        targets.append((f"{BASE}/hk/search/{quote(term)}-jobs", term, False))
+    return targets
+
+
+def _search_urls_for(cfg: TrackConfig) -> list[str]:
+    """（相容用）只要 URL。"""
+    return [url for url, _q, _ai in _search_targets(cfg)]
 
 
 async def _scroll_search(page, target_links: int) -> None:
@@ -79,7 +101,7 @@ async def scrape(session: BrowserSession, track: str = "it",
     drafts: list[JobDraft] = []
     seen: set[str] = set()
 
-    for url in _search_urls_for(cfg):
+    for url, query, is_ai_group in _search_targets(cfg):
         if scan_control.stop_requested():
             log.info("offertoday: stop requested before search %s", url.rsplit("/", 1)[-1])
             return drafts
@@ -156,10 +178,13 @@ async def scrape(session: BrowserSession, track: str = "it",
                     salary_range=salary,
                     jd_text="",
                     category=category,
-                    raw={"card_text": card_text[:500], "priority": priority},
+                    source_query=query,
+                    raw={"card_text": card_text[:500], "priority": priority,
+                         "ai_search": is_ai_group},
                 ))
-            log.info("offertoday %s: took %s normal + %s priority (cap %s + %s/search)",
-                     url.rsplit("/", 1)[-1], taken_normal, taken_priority, cap, extra)
+            log.info("offertoday %s%s: took %s normal + %s priority (cap %s + %s/search)",
+                     url.rsplit("/", 1)[-1], "（AI 組）" if is_ai_group else "",
+                     taken_normal, taken_priority, cap, extra)
             await page.close()
         except Exception as e:  # noqa: BLE001
             log.warning("offertoday search %s failed: %s", url, e)

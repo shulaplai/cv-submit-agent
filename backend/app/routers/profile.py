@@ -65,8 +65,11 @@ def get_tuning(db: Session = Depends(get_db)):
 
     `explicit` = 你喺設定頁明確填過嘅欄位；其餘係 .env 預設。
     """
-    from ..services.tuning import load_tuning, priority_keywords
+    from ..services.tuning import ai_search_terms, load_tuning, priority_keywords
     from ..services.cv_loader import ai_title_keywords
+    from ..services.classify import builtin_block_config
+
+    sales_kws, industry_kws = builtin_block_config()
 
     t = load_tuning(db)
     profile = db.get(Profile, 1)
@@ -83,6 +86,17 @@ def get_tuning(db: Session = Depends(get_db)):
         "enrich_all_it": t.enrich_all_it,
         "max_enrich_it_per_scan": t.max_enrich_it_per_scan,
         "enrich_general_jobs": t.enrich_general_jobs,
+        "ai_search_terms": ai_search_terms(t),
+        "ai_search_max_searches": t.ai_search_max_searches,
+        "ai_search_max_age_days": t.ai_search_max_age_days,
+        "ai_stale_action": t.ai_stale_action,
+        "ai_title_keywords": ai_title_keywords(),
+        "blocked_sales_keywords": sales_kws,
+        "blocked_industry_keywords": industry_kws,
+        "ai_check_enabled": t.ai_check_enabled,
+        "ai_check_batch_size": t.ai_check_batch_size,
+        "ai_check_limit": t.ai_check_limit,
+        "ai_check_after_scan": t.ai_check_after_scan,
         "scan_job_delay_min": t.scan_job_delay_min,
         "scan_job_delay_max": t.scan_job_delay_max,
         "scan_hour": t.scan_hour,
@@ -123,6 +137,51 @@ async def upload_cv(kind: str = Form(...), file: UploadFile = File(...),
     db.commit()
     db.refresh(profile)
     return profile
+
+
+@router.get("/smtp-status")
+def smtp_status(db: Session = Depends(get_db)):
+    """SMTP 設定狀態（唔會連線）：UI 顯示「會唔會自動寄得出」。"""
+    from ..services.email_bot import smtp_config, smtp_ready
+
+    cfg = smtp_config()
+    safe = {k: v for k, v in cfg.items() if k != "password"}
+    return {
+        "configured": smtp_ready(cfg),
+        "has_password": bool(cfg["password"]),
+        "method": cfg["method"],
+        "config": safe,
+    }
+
+
+@router.post("/test-smtp")
+def test_smtp_endpoint(db: Session = Depends(get_db)):
+    """連線 + 登入測試（唔會寄信）。設定頁「測試 SMTP」用。"""
+    from ..services.email_bot import test_smtp
+
+    return test_smtp()
+
+
+@router.post("/send-test-email")
+def send_test_email(payload: dict | None = None,
+                    db: Session = Depends(get_db)):
+    """寄一封測試信去自己（SMTP_FROM_EMAIL）—— 真係試「自動寄出」呢條路。"""
+    from ..services.email_bot import send_email_smtp, smtp_config
+
+    cfg = smtp_config()
+    to = (payload or {}).get("to") or cfg.get("from_email") or cfg.get("user")
+    if not to:
+        raise HTTPException(status_code=400, detail="未填寄件人（SMTP 帳號）")
+    email = {
+        "to": to,
+        "subject": "[cv-submit] SMTP 測試 — 自動寄信",
+        "body": "呢封係 CV Submit Agent 嘅 SMTP 測試信。\n\n"
+                "如果你收到，即係「自動寄出 email 申請」呢條路已經通 —— "
+                "之後投 gov.hk 工會自動寄出（內文 + CV 附件），唔需要 macOS Mail 權限。",
+        "attachment": "",
+    }
+    ok, note = send_email_smtp(email, cfg)
+    return {"ok": ok, "to": to, "note": note}
 
 
 @router.post("/test-llm")

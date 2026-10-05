@@ -75,7 +75,9 @@ def _harness(monkeypatch, titles, cap, extra, bypass=True):
     async def fake_human_delay(*a, **k):
         return None
 
-    monkeypatch.setattr(scraper_offertoday, "_search_urls_for", lambda cfg_: ["https://x/it"])
+    # 只行一個搜尋頁（AI 搜尋組另有測試；呢度驗每頁上限／豁免嘅數學）
+    monkeypatch.setattr(scraper_offertoday, "_search_targets",
+                        lambda cfg_: [("https://x/it", "developer", False)])
     monkeypatch.setattr(scraper_offertoday, "open_page", fake_open_page)
     monkeypatch.setattr(scraper_offertoday, "_scroll_search", fake_scroll)
     monkeypatch.setattr(scraper_offertoday, "human_delay", fake_human_delay)

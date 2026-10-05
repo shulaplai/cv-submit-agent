@@ -171,16 +171,75 @@ async def _open_apply_inner(row: JobApplication, cl_text: str = "", auto: bool =
                 "submitted": False,
                 "message": "外部申請網站唔會自動投遞（避免亂填公司系統），請撳 link 手動完成。"}
 
-    if row.apply_method == "email":
+    platform = row.platform or ""
+
+    # 政府工（gov.hk）申請方法一定係 email（聯絡 email 寫喺詳情頁「申請須知」）。
+    # 舊資料如果冇 contact_email，`store._apply_method_for()` 會標成 "form"，
+    # 以前就會跌入「唔支援嘅平台: govhk_gbayes」—— 而家一律行 email flow，
+    # 冇 email 就即場去原頁搵返（見 _repair_govhk_contact）。
+    if row.apply_method == "email" or platform.startswith("govhk"):
+        if platform.startswith("govhk") and not (row.contact_email or "").strip() \
+           and row.apply_method != "external_link":
+            await _repair_govhk_contact(row)
+        if not (row.contact_email or "").strip():
+            return _abort(
+                "呢份政府工喺詳情頁搵唔到聯絡 email（可能係電話／親身／網上應徵）。"
+                "請撳下面條 link 睇「申請須知」，或者用職位台嘅「🔄 更新 JD」再試。",
+                row.url)
         from .email_bot import open_email_compose
         return await open_email_compose(row, cl_text, send=auto, template_key=template_key)
 
-    if row.platform == "jobsdb":
+    if platform == "jobsdb":
         return await _jobsdb(row, cl_text, auto)
-    if row.platform == "offertoday":
+    if platform == "offertoday":
         return await _offertoday(row, cl_text, auto)
     return {"ok": False, "kind": "unknown", "submitted": False,
-            "message": f"唔支援嘅平台: {row.platform}"}
+            "url": row.url,
+            "message": f"唔支援嘅平台: {row.platform}（請用原頁申請）"}
+
+
+async def _repair_govhk_contact(row: JobApplication) -> None:
+    """政府工冇聯絡 email（舊資料／詳情頁當時揭唔到）-> 即刻去原頁搵返並寫入 DB。
+
+    只會喺「真係冇 email」先做，而且失敗唔會拋錯（照樣行落去，之後會提示手動）。
+    """
+    from . import scraper_govhk
+    from .scanner import _draft_from_row
+    from .scraper_base import get_browser
+
+    try:
+        session = await get_browser(row.platform)
+        draft = await scraper_govhk.fetch_detail(session, _draft_from_row(row))
+    except Exception as e:  # noqa: BLE001
+        log.warning("govhk contact repair failed for job %s: %s", getattr(row, "id", "?"), e)
+        return
+    if not draft.contact_email:
+        log.info("govhk contact repair: job %s 詳情頁仍然冇 email", getattr(row, "id", "?"))
+        return
+
+    row.contact_email = draft.contact_email
+    row.contact_person = draft.contact_person or row.contact_person
+    row.apply_method = "email"
+    if draft.jd_text and not row.jd_text:
+        row.jd_text = draft.jd_text
+    try:
+        from ..db import SessionLocal
+
+        db = SessionLocal()
+        try:
+            db_row = db.get(JobApplication, row.id)
+            if db_row is not None:
+                db_row.contact_email = row.contact_email
+                db_row.contact_person = row.contact_person
+                db_row.apply_method = "email"
+                if draft.jd_text and not db_row.jd_text:
+                    db_row.jd_text = draft.jd_text
+                db.commit()
+        finally:
+            db.close()
+        log.info("govhk contact repair: job %s 補返 email %s", row.id, row.contact_email)
+    except Exception:  # noqa: BLE001
+        log.warning("govhk contact repair: 寫入 DB 失敗（job %s）", getattr(row, "id", "?"))
 
 
 def _abort(message: str, url: str = "") -> dict:

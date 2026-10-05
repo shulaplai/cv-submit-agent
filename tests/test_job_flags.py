@@ -4,10 +4,13 @@ from app.services.jobflags import ai_match, compute_flags, is_agency, is_contrac
 
 
 def test_ai_match_from_title():
+    """用戶要求：只認「AI」同「agent」兩個字眼（設定頁可加）。"""
     assert ai_match("AI Engineer") is True
-    assert ai_match("人工智能工程師") is True
-    assert ai_match("大模型應用開發") is True
+    assert ai_match("Agent Developer") is True
+    assert ai_match("保險 Agent 轉行") is True     # 有 agent 就收（用戶要求：一定要收）
     assert ai_match("Web Developer") is False
+    assert ai_match("Python Programmer") is False
+    assert ai_match("大模型應用開發") is False      # 已經唔喺 AI 字眼清單
 
 
 def test_ai_match_from_jd_only():
@@ -50,7 +53,19 @@ def test_compute_flags_reads_row_attributes():
         jd_text = ""
 
     flags = compute_flags(Row())
-    assert flags == {"ai_match": True, "is_contract": True, "is_agency": True}
+    assert flags == {"ai_match": True, "ai_strength": "title",
+                     "is_contract": True, "is_agency": True}
+
+
+def test_ai_strength_title_vs_jd_only():
+    """用戶要求：AI／agent 相關分「標題有」同「只喺 JD 提到」兩級。"""
+    from app.services.jobflags import ai_relevance
+
+    assert ai_relevance("AI Engineer") == "title"
+    assert ai_relevance("Agent Developer") == "title"
+    assert ai_relevance("軟件工程師", "我們用 LLM 同 AI agent 開發") == "jd"
+    assert ai_relevance("Python Programmer") == ""      # 普通 programmer 唔算相關
+    assert ai_relevance("Python Programmer", "寫後端 API") == ""
 
 
 def test_backfill_job_flags_fills_legacy_rows(db):

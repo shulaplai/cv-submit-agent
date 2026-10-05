@@ -56,6 +56,7 @@ def persist_drafts(db: Session, drafts: list[JobDraft]) -> tuple[int, int, list[
             posted_date=parse_posted_date(d.posted_at or ""),
             match_score=0,
             apply_method=_apply_method_for(d),
+            source_query=getattr(d, "source_query", "") or "",
             contact_email=d.contact_email,
             contact_person=d.contact_person,
             status="pending_review",

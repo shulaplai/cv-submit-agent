@@ -12,6 +12,10 @@ export function Settings({ pushToast }: { pushToast: (text: string, kind?: "info
   const [browserOk, setBrowserOk] = useState(false);
   const [chromeRunning, setChromeRunning] = useState(false);
   const [browserNote, setBrowserNote] = useState("檢查 Chrome 連線中…");
+  const [mailNote, setMailNote] = useState<string | null>(null);
+  const [mailOk, setMailOk] = useState(false);
+  const [smtpNote, setSmtpNote] = useState<string | null>(null);
+  const [smtpOk, setSmtpOk] = useState(false);
   const cvInputs = useRef<Record<string, HTMLInputElement | null>>({
     en: null,
     zh: null,
@@ -161,6 +165,25 @@ export function Settings({ pushToast }: { pushToast: (text: string, kind?: "info
         enrich_all_it: p.enrich_all_it,
         max_enrich_it_per_scan: p.max_enrich_it_per_scan,
         enrich_general_jobs: p.enrich_general_jobs,
+        // AI 搜尋組
+        ai_search_terms: p.ai_search_terms,
+        ai_search_max_searches: p.ai_search_max_searches,
+        ai_search_max_age_days: p.ai_search_max_age_days,
+        ai_stale_action: p.ai_stale_action,
+        it_blocked_keywords: p.it_blocked_keywords,
+        send_method: p.send_method,
+        smtp_host: p.smtp_host,
+        smtp_port: p.smtp_port,
+        smtp_user: p.smtp_user,
+        smtp_password: p.smtp_password,
+        smtp_from_name: p.smtp_from_name,
+        smtp_from_email: p.smtp_from_email,
+        smtp_use_ssl: p.smtp_use_ssl,
+        smtp_bcc_self: p.smtp_bcc_self,
+        ai_check_enabled: p.ai_check_enabled,
+        ai_check_batch_size: p.ai_check_batch_size,
+        ai_check_limit: p.ai_check_limit,
+        ai_check_after_scan: p.ai_check_after_scan,
         // 節奏
         scan_job_delay_min_seconds: p.scan_job_delay_min_seconds,
         scan_job_delay_max_seconds: p.scan_job_delay_max_seconds,
@@ -182,6 +205,57 @@ export function Settings({ pushToast }: { pushToast: (text: string, kind?: "info
       pushToast("設定已儲存。", "ok");
     } catch (e) {
       pushToast(`儲存失敗: ${(e as Error).message}`, "err");
+    }
+  };
+
+  const testSmtp = async () => {
+    setBusy(true);
+    setSmtpNote("連線測試中…");
+    try {
+      const r = await api.testSmtp();
+      setSmtpOk(r.ok);
+      setSmtpNote(r.note);
+    } catch (e) {
+      setSmtpOk(false);
+      setSmtpNote(`測試失敗: ${(e as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const sendTestEmail = async () => {
+    setBusy(true);
+    setSmtpNote("寄測試信中…");
+    try {
+      const r = await api.sendTestEmail();
+      setSmtpOk(r.ok);
+      setSmtpNote(`${r.note}（收件人：${r.to}）`);
+    } catch (e) {
+      setSmtpOk(false);
+      setSmtpNote(`測試失敗: ${(e as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const checkMail = async (deep = false) => {
+    setBusy(true);
+    setMailNote(deep ? "開一封測試 draft 檢查中…（唔會寄出）" : "檢查中…");
+    try {
+      if (deep) {
+        const r = await api.mailSelftest();
+        setMailOk(r.ok);
+        setMailNote(r.ok ? r.note : `${r.note}\n原始錯誤：${r.error}\n${r.hint}`);
+      } else {
+        const r = await api.mailStatus();
+        setMailOk(r.ok);
+        setMailNote(r.ok ? r.note : `${r.note}\n${r.hint}`);
+      }
+    } catch (e) {
+      setMailOk(false);
+      setMailNote(`檢查失敗: ${(e as Error).message}`);
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -392,10 +466,13 @@ export function Settings({ pushToast }: { pushToast: (text: string, kind?: "info
             <input
               value={p.cv_ai_title_keywords}
               onChange={(e) => set("cv_ai_title_keywords", e.target.value)}
-              placeholder="ai, artificial intelligence, 人工智能, llm, 大模型, machine learning, 生成式, genai, ai agent"
+              placeholder="ai,agent"
             />
             <div className="note-inline">
-              標題命中呢啲字眼就會用「AI 版 CV」＋「AI Agent 版自我介紹」；搵唔到 AI 版就自動用 Full-stack 版。
+              標題命中呢啲字眼 = 「AI 相關」：會用「AI 版 CV」＋「AI Agent 版自我介紹」，
+              而且<b>無視渠道／掃描上限，一定要收</b>（高分豁免）。<br />
+              現時預設只有 <b>ai</b> 同 <b>agent</b>（用戶要求：大模型／機器學習等唔再自動算 AI）。
+              想加返就喺度填，例如 <b>llm,機器學習</b>。
             </div>
           </div>
           <div className="field">
@@ -541,6 +618,21 @@ export function Settings({ pushToast }: { pushToast: (text: string, kind?: "info
             </div>
           </div>
           <div className="field">
+            <label>🚫 IT 軌封鎖字眼（保險／地產／sales agent 類；留空 = 內建兩層清單）</label>
+            <input
+              value={p.it_blocked_keywords}
+              onChange={(e) => set("it_blocked_keywords", e.target.value)}
+              placeholder="（留空 = 內建：代理, 經紀, 跑數, 保險, 地產, 物業…）"
+            />
+            <div className="note-inline">
+              命中就一定唔入 IT 軌（<b>絕對否決</b>，連 AI 工都唔例外）。留空 = 用內建兩層清單：
+              <br />· <b>硬封鎖</b>：代理／經紀／營業員／佣金／跑數／門市／insurance agent／property agent…
+              <br />· <b>行業字眼</b>（保險／地產／物業／前線…）：只有標題<b>冇</b>技術訊號（AI／developer／系統／程式／數據…）才封鎖
+              —— 所以「AI Engineer（大型保險公司）」會保留、「物業工程師」照封。
+              <br />你一旦填咗，就完全用你嗰套（硬封鎖）。
+            </div>
+          </div>
+          <div className="field">
             <label>「唔當 IT」字眼（逗號分隔；留空 = 內建）</label>
             <input
               value={p.non_it_keywords}
@@ -613,10 +705,12 @@ export function Settings({ pushToast }: { pushToast: (text: string, kind?: "info
             <input
               value={p.offertoday_it_search_terms}
               onChange={(e) => set("offertoday_it_search_terms", e.target.value)}
-              placeholder="AI Agent, 人工智能, 大模型, AI…"
+              placeholder="developer, FDE, programmer…（AI／agent 放下面「AI 搜尋組」）"
             />
             <div className="note-inline">
-              喺 OfferToday 三個技術分類頁（資訊科技／工程師／科技）之上，再逐個字詞開搜尋頁；每次最多 4 個（`OFFERTODAY_IT_MAX_SEARCHES`）。
+              喺 OfferToday 三個技術分類頁（資訊科技／工程師／科技）之上，再逐個字詞開搜尋頁。
+              用高精度字詞（例如 <b>developer, FDE, programmer</b>）比用「工程師」雜訊少好多。
+              每次最多開幾多個搜尋頁見上面「掃描量」。
             </div>
           </div>
           <div className="field">
@@ -930,6 +1024,122 @@ export function Settings({ pushToast }: { pushToast: (text: string, kind?: "info
         </div>
 
         <div className="section">
+          <h4>AI 搜尋組（專門搵 AI／agent 工，限 7 日內）</h4>
+          <div className="note-inline" style={{ borderStyle: "solid" }}>
+            呢組字詞會<b>獨立開搜尋頁</b>（唔同其他字詞爭預算），而且只收<b>7 日內</b>刊登嘅工：
+            一撞到過期就即刻停（可以揀停該渠道，或者暫停成個掃描）。
+            字詞命中「AI／agent」（見上邊 AI 職位判斷字眼）嘅工<b>一定要收</b>，唔會被渠道上限擋。
+          </div>
+          <div className="field">
+            <label>AI 搜尋字詞（逗號分隔；留空 = .env 預設 agent,AI）</label>
+            <input
+              value={p.ai_search_terms}
+              onChange={(e) => set("ai_search_terms", e.target.value)}
+              placeholder="agent, AI, ai engineer, ai agent"
+            />
+          </div>
+          <div className="field">
+            <label>每次掃描最多開幾多個 AI 搜尋頁</label>
+            <input
+              type="number"
+              min={0}
+              max={30}
+              className="num-input"
+              value={p.ai_search_max_searches}
+              onChange={(e) => set("ai_search_max_searches", Number(e.target.value))}
+            />
+          </div>
+          <div className="field">
+            <label>AI 組刊登日期上限（日；0 = 唔限）</label>
+            <input
+              type="number"
+              min={0}
+              max={60}
+              className="num-input"
+              value={p.ai_search_max_age_days < 0 ? 7 : p.ai_search_max_age_days}
+              onChange={(e) => set("ai_search_max_age_days", Number(e.target.value))}
+            />
+            <div className="note-inline">其他渠道維持原本（大灣區 7 日、其餘 14 日）。</div>
+          </div>
+          <div className="field">
+            <label>AI 組撞到過期工點做</label>
+            <select
+              className="chip-btn"
+              style={{ appearance: "auto" }}
+              value={p.ai_stale_action || "channel"}
+              onChange={(e) => set("ai_stale_action", e.target.value)}
+            >
+              <option value="channel">停該渠道，繼續掃其他（預設）</option>
+              <option value="scan">暫停成個掃描（即刻收工）</option>
+            </select>
+          </div>
+          <div className="note-inline">
+            想排除某啲字眼（例如「保險」「地產」「代理」）可以喺上面「唔當 IT 字眼」加，
+            預設唔會過濾（AI／agent 一律照收）。
+          </div>
+        </div>
+
+        <div className="section">
+          <h4>批量 AI 檢查（LLM 搵出「其實唔係 IT」嘅工）</h4>
+          <div className="note-inline" style={{ borderStyle: "solid" }}>
+            關鍵字規則永遠有漏網之魚（例：「網路銷售代理」有『網路』、非電腦嘅「工程師」）。
+            呢個功能會<b>分批</b>（每次 40 份職位 + JD 頭段做一個 LLM call）判斷每份工係唔係真正 IT／AI，
+            判「非 IT」就標<b>低匹配</b>（職位台預設隱藏，可以喺「低匹配」chip 睇返 / 撳「↩ 還原 AI 判定」）。
+            只檢查 <b>IT 軌</b>、未檢查過、未投遞嘅工 —— 一般工唔會洗錢。
+            <br />職位台有「🤖 批量 AI 檢查」掣可以隨時手動跑。
+          </div>
+          <label className="check-row" style={{ alignItems: "flex-start" }}>
+            <input
+              type="checkbox"
+              style={{ marginTop: 4 }}
+              checked={p.ai_check_enabled}
+              onChange={(e) => set("ai_check_enabled", e.target.checked)}
+            />
+            <span>
+              <b>啟用 AI 檢查</b>（唔開都仍然可以喺職位台手動撳掣）
+            </span>
+          </label>
+          <label className="check-row" style={{ alignItems: "flex-start" }}>
+            <input
+              type="checkbox"
+              style={{ marginTop: 4 }}
+              checked={p.ai_check_after_scan}
+              onChange={(e) => set("ai_check_after_scan", e.target.checked)}
+            />
+            <span>每次掃描完自動跑一次（預設唔開：唔想偷偷洗錢）</span>
+          </label>
+          <div className="check-row">
+            <div className="field" style={{ marginBottom: 0 }}>
+              <label>每批幾多份（一個 LLM call）</label>
+              <input
+                type="number"
+                min={1}
+                max={200}
+                className="num-input"
+                value={p.ai_check_batch_size || 40}
+                onChange={(e) => set("ai_check_batch_size", Number(e.target.value))}
+                title="0 = 跟 .env（預設 40）"
+              />
+            </div>
+            <div className="field" style={{ marginBottom: 0 }}>
+              <label>每次最多檢查幾多份</label>
+              <input
+                type="number"
+                min={1}
+                max={2000}
+                className="num-input"
+                value={p.ai_check_limit || 200}
+                onChange={(e) => set("ai_check_limit", Number(e.target.value))}
+                title="0 = 跟 .env（預設 200）"
+              />
+            </div>
+          </div>
+          <div className="note-inline">
+            成本估算：<b>份數 ÷ 每批份數</b>＝ LLM 次數。例如 200 份、每批 40 → 5 次 call。
+          </div>
+        </div>
+
+        <div className="section">
           <h4>求職者資歷（影響評分同排序）</h4>
           <div className="field">
             <label>年資（年）— 評分會扣「要 5 年+/senior」嘅工，標示「資歷超出」</label>
@@ -1084,6 +1294,122 @@ export function Settings({ pushToast }: { pushToast: (text: string, kind?: "info
         </div>
 
         <div className="section">
+          <h4>自動寄 email（SMTP）— 唔需要 macOS Mail 權限</h4>
+          <div className="note-inline" style={{ borderStyle: "solid" }}>
+            要真正「自己寄出去（內文 + CV 附件自動填好）」而唔想撞 macOS 自動化權限（-10004），
+            就用 SMTP：由程式直接連你嘅郵箱寄信，<b>唔會開 Mail、唔需要任何 macOS 權限</b>。
+            <br />常見設定：
+            <b>Gmail</b> smtp.gmail.com:587（要「應用程式密碼」16 位）／
+            <b>iCloud</b> smtp.mail.me.com:587（應用程式專用密碼）／
+            <b>Outlook／公司</b> smtp.office365.com:587（可能要管理員開 SMTP AUTH）／
+            <b>QQ／163</b> smtp.qq.com:465（開 SSL）。
+          </div>
+          <div className="field">
+            <label>寄信方式</label>
+            <select
+              className="chip-btn"
+              style={{ appearance: "auto" }}
+              value={p.send_method || "auto"}
+              onChange={(e) => set("send_method", e.target.value)}
+            >
+              <option value="auto">自動（有填 SMTP 用 SMTP，冇就用 macOS Mail）</option>
+              <option value="smtp">只用 SMTP（唔會開 Mail）</option>
+              <option value="mail">只用 macOS Mail（AppleScript）</option>
+            </select>
+          </div>
+          <div className="check-row">
+            <div className="field" style={{ marginBottom: 0, flex: 2 }}>
+              <label>SMTP 伺服器</label>
+              <input
+                value={p.smtp_host}
+                onChange={(e) => set("smtp_host", e.target.value)}
+                placeholder="smtp.gmail.com"
+              />
+            </div>
+            <div className="field" style={{ marginBottom: 0, flex: 1 }}>
+              <label>Port</label>
+              <input
+                type="number"
+                className="num-input"
+                value={p.smtp_port || 587}
+                onChange={(e) => set("smtp_port", Number(e.target.value))}
+              />
+            </div>
+          </div>
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={p.smtp_use_ssl}
+              onChange={(e) => set("smtp_use_ssl", e.target.checked)}
+            />
+            用 SSL（465 通常要開；587 用 STARTTLS 唔開）
+          </label>
+          <div className="field">
+            <label>SMTP 帳號（email）</label>
+            <input
+              value={p.smtp_user}
+              onChange={(e) => set("smtp_user", e.target.value)}
+              placeholder="you@gmail.com"
+            />
+          </div>
+          <div className="field">
+            <label>SMTP 密碼（Gmail／iCloud 要填應用程式密碼，唔係平時登入密碼）</label>
+            <input
+              type="password"
+              value={p.smtp_password}
+              onChange={(e) => set("smtp_password", e.target.value)}
+              placeholder="xxxx xxxx xxxx xxxx"
+            />
+          </div>
+          <div className="check-row">
+            <div className="field" style={{ marginBottom: 0 }}>
+              <label>顯示名（收件人見到嘅寄件人）</label>
+              <input
+                value={p.smtp_from_name}
+                onChange={(e) => set("smtp_from_name", e.target.value)}
+                placeholder="Lai Shu Lap"
+              />
+            </div>
+            <div className="field" style={{ marginBottom: 0 }}>
+              <label>寄件人 email（留空 = SMTP 帳號）</label>
+              <input
+                value={p.smtp_from_email}
+                onChange={(e) => set("smtp_from_email", e.target.value)}
+                placeholder="you@gmail.com"
+              />
+            </div>
+          </div>
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={p.smtp_bcc_self}
+              onChange={(e) => set("smtp_bcc_self", e.target.checked)}
+            />
+            每封申請信 BCC 一份去自己（做備份／追蹤）
+          </label>
+          <div className="btnrow" style={{ marginTop: 10 }}>
+            <button className="btn" onClick={testSmtp} disabled={busy}>
+              🔌 測試 SMTP（唔會寄信）
+            </button>
+            <button className="btn primary" onClick={sendTestEmail} disabled={busy}>
+              ✉ 寄測試信去自己
+            </button>
+          </div>
+          {smtpNote && (
+            <div
+              className={`note-inline ${smtpOk ? "ok" : "err"}`}
+              style={{ borderStyle: "solid", whiteSpace: "pre-wrap", marginTop: 8 }}
+            >
+              {smtpNote}
+            </div>
+          )}
+          <div className="note-inline">
+            ⚠ 記得撳最底「儲存設定」先會生效。填好之後，gov.hk email 申請會<b>自動寄出</b>：
+            內文（已 AI 潤色）＋ CV 附件（跟職位揀版本）都會自動處理，唔會再彈 mailto。
+          </div>
+        </div>
+
+        <div className="section">
           <h4>申請行為</h4>
           <label className="check-row" style={{ alignItems: "flex-start" }}>
             <input
@@ -1104,6 +1430,40 @@ export function Settings({ pushToast }: { pushToast: (text: string, kind?: "info
               </span>
             </span>
           </label>
+          <div className="field" style={{ marginTop: 14 }}>
+            <label>Email 發送權限（macOS Mail 自動化）</label>
+            <div className="btnrow">
+              <button className="btn" onClick={() => checkMail(false)} disabled={busy}>
+                📧 檢查 Mail 權限
+              </button>
+              <button className="btn primary" onClick={() => checkMail(true)} disabled={busy}>
+                🧪 測試開信（唔會寄出）
+              </button>
+            </div>
+            {mailNote && (
+              <div
+                className={`note-inline ${mailOk ? "ok" : "err"}`}
+                style={{ borderStyle: "solid", whiteSpace: "pre-wrap", marginTop: 8 }}
+              >
+                {mailNote}
+              </div>
+            )}
+            <div className="note-inline">
+              gov.hk 嘅 email 申請係用 macOS Mail 嘅 AppleScript 發送。見到
+              <b>「-10004 越權取用的錯誤」</b>＝ macOS 未批准「邊個程式叫 Mail」。
+              <br />
+              ⚠ 記住：<b>「檢查 Mail 權限」唔可以只用版本號判斷</b>（macOS 連未批准都會答版本），
+              所以請撳 <b>「🧪 測試開信」</b>—— 佢真係開一封 draft（即刻關閉、唔會寄出），
+              失敗就會連原始錯誤一齊顯示。
+              <br />
+              修法：<b>系統設定 → 隱私權與安全性 → 自動化</b> → 揾<b>終端機／Terminal</b>
+              （或你啟動 server 嗰個程式）→ 勾返<b>「郵件 / Mail」</b> → 重啟 server。
+              <br />
+              最穩做法：由<b>你自己嘅 Terminal</b> 跑 <b>./run.sh</b>（權限跟「邊個 app 叫 Mail」，
+              Terminal 通常已經批過）。就算未批，發送失敗都會自動改用
+              <b>mailto + 複製內文到剪貼簿</b>，唔會卡死。
+            </div>
+          </div>
         </div>
 
         <button className="btn primary" onClick={save}>

@@ -2,6 +2,7 @@
 
 用戶要求：唔止 `.env`，設定頁都可以加大／唔設限；數值要即刻生效。
 """
+from conftest import days_ago, days_ago_dmy
 import asyncio
 
 from app.config import settings
@@ -84,7 +85,7 @@ def test_summary_reports_bypass_extra_from_channel(db, monkeypatch):
     monkeypatch.setattr(settings, "CAP_BYPASS_ENABLED", True)
 
     drafts = [JobDraft(platform="govhk_general", job_id=f"11-26-{i:07d}",
-                       title="文員", posted_at="01/08/2026", category="general")
+                       title="文員", posted_at=days_ago_dmy(1), category="general")
               for i in range(10)]
 
     async def fake_scrape(session, track="general", cfg=None, channels=None):
@@ -120,7 +121,7 @@ def test_max_scan_jobs_zero_keeps_everything(db, monkeypatch):
 
     async def fake_fetch_detail(session, d):
         d.jd_text = "JD"
-        d.posted_at = "2026-08-01"
+        d.posted_at = days_ago(1)
         return d
 
     async def fake_get_browser(platform):

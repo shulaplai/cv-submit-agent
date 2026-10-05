@@ -19,7 +19,7 @@ from ..schemas import (
     RegenerateCLLIn,
     UpdateApplicationIn,
 )
-from ..services import scraper_jobsdb, scraper_offertoday
+from ..services import scraper_govhk, scraper_jobsdb, scraper_offertoday
 from ..services.apply_bot import open_apply
 from ..services.cl_generator import generate_cl_checked
 from ..services.cv_loader import (CVError, VARIANT_LABEL, get_cv_text, load_skills,
@@ -43,6 +43,17 @@ VALID_STATUSES = {
 }
 # 有記錄結果嘅狀態（PATCH 時會記 outcome_at，餵統計漏斗）
 OUTCOME_STATUSES = {"interviewing", "rejected", "offer", "no_response"}
+
+
+def _detail_fetcher(platform: str):
+    """platform -> 可以補詳情嘅 scraper（政府工三個子渠道都行 govhk scraper）。"""
+    if platform == "jobsdb":
+        return scraper_jobsdb.fetch_detail
+    if platform == "offertoday":
+        return scraper_offertoday.fetch_detail
+    if (platform or "").startswith("govhk"):
+        return scraper_govhk.fetch_detail
+    return None
 
 
 def _load(db: Session, job_id: int) -> JobApplication:
@@ -425,6 +436,109 @@ def batch_status():
     return _batch_state
 
 
+# ---------------------------------------------------------------- batch AI check
+
+_ai_check_state: dict = {"running": False, "checked": 0, "total": 0, "batches": 0,
+                         "non_it": 0, "it_ai": 0, "it": 0, "failed_batches": 0,
+                         "errors": [], "marked_ids": [], "last": None}
+
+
+class AiCheckIn(BaseModel):
+    limit: int | None = None
+    batch_size: int | None = None
+
+
+async def _run_ai_check(limit: int, batch_size: int) -> None:
+    from ..services import ai_filter
+
+    db: Session = SessionLocal()
+    try:
+        _ai_check_state.update({
+            "running": True, "checked": 0, "total": 0, "batches": 0,
+            "non_it": 0, "it_ai": 0, "it": 0, "failed_batches": 0,
+            "errors": [], "marked_ids": [],
+        })
+        progress = {"phase": "starting", "done": 0, "total": 0, "batch": 0}
+        result = await ai_filter.run_ai_check(
+            db, limit=limit, batch_size=batch_size, progress=progress)
+        payload = result.as_dict()
+        _ai_check_state.update(payload)
+        _ai_check_state["running"] = False
+        _ai_check_state["total"] = progress.get("total", payload["checked"])
+        _ai_check_state["last"] = {"at": utcnow().isoformat(), **payload}
+    except Exception as e:  # noqa: BLE001
+        log.exception("ai check crashed")
+        _ai_check_state.update({"running": False, "errors": [str(e)[:200]]})
+    finally:
+        db.close()
+
+
+@router.get("/ai-check/pending")
+def ai_check_pending(db: Session = Depends(get_db)):
+    """仲有幾多份 IT 工未做 AI 檢查（UI 顯示按鈕數字用）。"""
+    from ..services import ai_filter
+
+    tuning = load_tuning(db)
+    return {
+        "pending": ai_filter.count_pending(db),
+        "batch_size": tuning.ai_check_batch_size,
+        "limit": tuning.ai_check_limit,
+        "enabled": tuning.ai_check_enabled,
+    }
+
+
+@router.post("/ai-check")
+async def start_ai_check(payload: AiCheckIn | None = None):
+    """批量 AI 檢查：分批（預設 40 份/call）搵出唔係 IT 嘅職位並標低匹配。"""
+    from ..services import ai_filter
+
+    if _ai_check_state.get("running"):
+        return {"started": False, "message": "AI 檢查已經喺度行緊"}
+    tuning = load_tuning()
+    limit = int((payload.limit if payload and payload.limit else tuning.ai_check_limit)
+                or ai_filter.DEFAULT_LIMIT)
+    batch_size = int((payload.batch_size if payload and payload.batch_size
+                      else tuning.ai_check_batch_size) or ai_filter.DEFAULT_BATCH_SIZE)
+    limit = max(1, min(limit, 2000))
+    batch_size = max(1, min(batch_size, 200))
+    asyncio.create_task(_run_ai_check(limit, batch_size))
+    calls = max(1, -(-limit // batch_size))
+    return {"started": True, "limit": limit, "batch_size": batch_size,
+            "estimated_llm_calls": calls,
+            "message": f"開始批量 AI 檢查（最多 {limit} 份，每批 {batch_size} 份 ≈ {calls} 次 LLM）"}
+
+
+@router.get("/ai-check/status")
+def ai_check_status():
+    return _ai_check_state
+
+
+@router.post("/ai-check/reset")
+def ai_check_reset(payload: dict | None = None):
+    """還原 AI 檢查判定（清空 verdict，令佢下次再檢查；唔會刪工）。"""
+    ids = (payload or {}).get("ids") or []
+    db = SessionLocal()
+    try:
+        q = db.query(JobApplication)
+        if ids:
+            q = q.filter(JobApplication.id.in_([int(i) for i in ids]))
+        else:
+            q = q.filter(JobApplication.ai_verdict != "")
+        n = 0
+        for row in q.all():
+            row.ai_verdict = ""
+            row.ai_verdict_reason = ""
+            row.ai_checked_at = None
+            if (row.match_reason or "").startswith("AI 檢查：") and row.status == "low_match":
+                row.status = "pending_review"
+                row.match_reason = ""
+            n += 1
+        db.commit()
+        return {"ok": True, "reset": n}
+    finally:
+        db.close()
+
+
 @router.get("/email-templates")
 def email_templates():
     """List the email body templates the user can pick before sending."""
@@ -452,13 +566,10 @@ async def fetch_job_detail(job_id: int, db: Session = Depends(get_db)):
     from ..services.scraper_base import get_browser, repair_browsers
 
     row = _load(db, job_id)
-    fetch_detail = {
-        "jobsdb": scraper_jobsdb.fetch_detail,
-        "offertoday": scraper_offertoday.fetch_detail,
-    }.get(row.platform)
+    fetch_detail = _detail_fetcher(row.platform)
     if fetch_detail is None:
         return {"ok": False, "updated": False,
-                "message": "呢個平台嘅 JD 喺掃描時已經入庫（政府工冇獨立詳情頁要補）。"}
+                "message": "呢個平台冇詳情頁可以補（JD 喺掃描時已經入庫）。"}
 
     async def _fetch_once():
         session = await get_browser(row.platform)
@@ -499,6 +610,17 @@ async def fetch_job_detail(job_id: int, db: Session = Depends(get_db)):
         row.external_url = draft.external_url
         row.apply_method = "external_link"
         changed.append("外部申請連結")
+    # 政府工：詳情頁嘅「申請須知」先有聯絡 email —— 補 JD 時順手補返，
+    # 否則舊資料（冇 email，被標成 form）永遠投唔到。
+    if draft.contact_email and draft.contact_email != row.contact_email:
+        row.contact_email = draft.contact_email
+        changed.append("聯絡 email")
+    if draft.contact_person and draft.contact_person != row.contact_person:
+        row.contact_person = draft.contact_person
+        changed.append("聯絡人")
+    if draft.contact_email and row.apply_method != "external_link" and row.apply_method != "email":
+        row.apply_method = "email"
+        changed.append("申請方式（email）")
     db.commit()
     db.refresh(row)
 
@@ -513,10 +635,7 @@ async def fetch_job_detail(job_id: int, db: Session = Depends(get_db)):
 async def refresh_job(job_id: int, db: Session = Depends(get_db)):
     """Fetch full JD (if missing), re-run match score and (re)generate CL."""
     row = _load(db, job_id)
-    fetch_detail = {
-        "jobsdb": scraper_jobsdb.fetch_detail,
-        "offertoday": scraper_offertoday.fetch_detail,
-    }.get(row.platform)
+    fetch_detail = _detail_fetcher(row.platform)
 
     if fetch_detail and not row.jd_text:
         from ..services.scraper_base import JobDraft

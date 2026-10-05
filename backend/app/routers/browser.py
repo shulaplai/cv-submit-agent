@@ -21,6 +21,49 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/browser", tags=["browser"])
 
 
+@router.get("/mail-status")
+async def mail_status():
+    """檢查自動化（AppleScript）權限：server 可唔可以控制 Mail 發 email。
+
+    用戶實測痛點：`-10004 越權取用的錯誤` = macOS Automation 權限未開／被拒。
+    呢個 endpoint 由 **server 自己嘅 process** 去問 Mail 版本（唔會開信、唔會寄信），
+    所以測到嘅就係「自動投遞 email 會唔會成功」。
+    """
+    from ..services.email_bot import mail_access
+
+    info = mail_access()
+    return {
+        "ok": info["ok"],
+        "version": info["version"],
+        "host_app": info.get("host_app", ""),
+        "note": info["note"],
+        "hint": ("" if info["ok"] else
+                 "系統設定 → 隱私權與安全性 → 自動化 → 揾「終端機／Terminal」"
+                 "（或啟動 server 嘅程式）→ 勾「郵件 / Mail」，之後重啟 server。"),
+    }
+
+
+@router.post("/mail-selftest")
+async def mail_selftest():
+    """真正開一封 Mail draft（冇收件人、即刻關閉、唔會寄出）再診斷。
+
+    `get version` 成功唔代表「開 draft」一定成功，所以用戶報 email 發送失敗時
+    用呢個一撳就知道係唔係權限／Mail 狀態問題。
+    """
+    from ..services.email_bot import mail_selftest as _selftest
+
+    info = _selftest()
+    return {
+        "ok": info["ok"],
+        "host_app": info.get("host_app", ""),
+        "note": info["note"],
+        "error": info["error"],
+        "hint": ("" if info["ok"] else
+                 "系統設定 → 隱私權與安全性 → 自動化 → 揾「終端機／Terminal」"
+                 "（或啟動 server 嘅程式）→ 勾「郵件 / Mail」，之後重啟 server。"),
+    }
+
+
 @router.get("/status")
 async def browser_status():
     available = await cdp_available()

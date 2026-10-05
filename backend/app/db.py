@@ -103,6 +103,29 @@ _COLUMN_MIGRATIONS = [
     ("job_applications", "is_contract", "BOOLEAN NOT NULL DEFAULT 0"),
     ("job_applications", "is_agency", "BOOLEAN NOT NULL DEFAULT 0"),
     ("job_applications", "match_level", "VARCHAR(10) NOT NULL DEFAULT ''"),
+    ("job_applications", "ai_strength", "VARCHAR(10) NOT NULL DEFAULT ''"),
+    ("job_applications", "source_query", "VARCHAR(120) NOT NULL DEFAULT ''"),
+    ("job_applications", "ai_verdict", "VARCHAR(10) NOT NULL DEFAULT ''"),
+    ("job_applications", "ai_verdict_reason", "TEXT NOT NULL DEFAULT ''"),
+    ("job_applications", "ai_checked_at", "DATETIME"),
+    ("profiles", "send_method", "VARCHAR(10) NOT NULL DEFAULT ''"),
+    ("profiles", "smtp_host", "VARCHAR(200) NOT NULL DEFAULT ''"),
+    ("profiles", "smtp_port", "INTEGER NOT NULL DEFAULT 0"),
+    ("profiles", "smtp_user", "VARCHAR(200) NOT NULL DEFAULT ''"),
+    ("profiles", "smtp_password", "VARCHAR(300) NOT NULL DEFAULT ''"),
+    ("profiles", "smtp_from_name", "VARCHAR(200) NOT NULL DEFAULT ''"),
+    ("profiles", "smtp_from_email", "VARCHAR(200) NOT NULL DEFAULT ''"),
+    ("profiles", "smtp_use_ssl", "BOOLEAN NOT NULL DEFAULT 0"),
+    ("profiles", "smtp_bcc_self", "BOOLEAN NOT NULL DEFAULT 1"),
+    ("profiles", "ai_check_enabled", "BOOLEAN NOT NULL DEFAULT 0"),
+    ("profiles", "ai_check_batch_size", "INTEGER NOT NULL DEFAULT 0"),
+    ("profiles", "ai_check_limit", "INTEGER NOT NULL DEFAULT 0"),
+    ("profiles", "ai_check_after_scan", "BOOLEAN NOT NULL DEFAULT 0"),
+    ("profiles", "it_blocked_keywords", "TEXT NOT NULL DEFAULT ''"),
+    ("profiles", "ai_search_terms", "TEXT NOT NULL DEFAULT ''"),
+    ("profiles", "ai_search_max_searches", "INTEGER NOT NULL DEFAULT 0"),
+    ("profiles", "ai_search_max_age_days", "INTEGER NOT NULL DEFAULT -1"),
+    ("profiles", "ai_stale_action", "VARCHAR(10) NOT NULL DEFAULT ''"),
     ("job_applications", "outcome_at", "DATETIME"),
     # ---- 發送前 AI 潤色嘅成品（+ cache key）----
     ("job_applications", "email_body_polished", "TEXT NOT NULL DEFAULT ''"),
@@ -134,6 +157,99 @@ _LEGACY_CAP_UPLIFT = [
     ("offertoday_it_max_per_search", "OFFERTODAY_MAX_PER_SEARCH", 80),
     ("offertoday_general_max_per_search", "OFFERTODAY_GENERAL_MAX_PER_SEARCH", 15),
 ]
+
+
+# 用戶要求（2026-10）：AI 相關只認「AI」同「agent」；IT 搜尋字詞只要
+# agent／developer／FDE／programmer／AI。舊 profile 值係上一代預設，一次性改返。
+_OLD_AI_KEYWORDS_DEFAULT = (
+    "ai, artificial intelligence, 人工智能, 機器學習, machine learning, "
+    "深度學習, deep learning, llm, 大模型, nlp, 自然語言處理, 電腦視覺, "
+    "computer vision, 生成式, genai, ai agent, 算法"
+)
+_NEW_AI_KEYWORDS = "ai,agent"
+_OLD_IT_SEARCH_TERMS = "AI, developer,工程師,  Programmer, engineer , agent"
+_NEW_IT_SEARCH_TERMS = "agent,developer,FDE,programmer,AI"
+
+
+def _migrate_ai_keyword_prefs() -> None:
+    """一次性：profile 仲係舊預設就換成用戶要嘅 AI／agent 設定。"""
+    try:
+        with engine.begin() as conn:
+            row = conn.execute(text(
+                "SELECT cv_ai_title_keywords, offertoday_it_search_terms "
+                "FROM profiles WHERE id=1")).fetchone()
+            if row is None:
+                return
+            ai_kw = (row[0] or "").strip()
+            terms = (row[1] or "").strip()
+            sets: list[str] = []
+            params: dict = {}
+            if ai_kw == _OLD_AI_KEYWORDS_DEFAULT.strip():
+                sets.append("cv_ai_title_keywords=:ai")
+                params["ai"] = _NEW_AI_KEYWORDS
+            # 舊值有冇多餘空白都當同一套
+            if terms.replace(" ", "") == _OLD_IT_SEARCH_TERMS.replace(" ", ""):
+                sets.append("offertoday_it_search_terms=:terms")
+                params["terms"] = _NEW_IT_SEARCH_TERMS
+            if sets:
+                conn.execute(text(f"UPDATE profiles SET {', '.join(sets)} WHERE id=1"), params)
+        if sets:
+            log.info("AI 偏好遷移：cv_ai_title_keywords -> %r；搜尋字詞 -> %r",
+                     _NEW_AI_KEYWORDS if "cv_ai_title_keywords=:ai" in " ".join(sets) else "(不變)",
+                     _NEW_IT_SEARCH_TERMS if "offertoday_it_search_terms=:terms" in " ".join(sets) else "(不變)")
+    except Exception:  # noqa: BLE001
+        log.warning("AI 偏好遷移失敗", exc_info=True)
+
+
+BLOCKED_REASON = "保險／地產／sales agent 類職位（IT 軌封鎖清單，設定頁可改）"
+
+
+def _purge_blocked_jobs() -> None:
+    """一次性：已經入咗 IT 軌嘅保險／地產／agent 類職位 -> 標低匹配（唔刪）。
+
+    用戶要求：呢類「都唔要」。標成 low_match 就唔會出主頁（職位台預設隱藏低匹配），
+    但你仍然可以喺「低匹配」chip 睇返／還原 —— 唔會靜靜刪咗你嘅資料。
+    """
+    from .services.classify import blocked_reason, resolve_blocked_keywords
+
+    try:
+        from .models import JobApplication, Profile
+    except Exception:  # noqa: BLE001
+        return
+    db = SessionLocal()
+    try:
+        profile = db.get(Profile, 1)
+        user_kws = (getattr(profile, "it_blocked_keywords", "") or "").strip()
+        kws = resolve_blocked_keywords(user_kws)
+        custom = bool(user_kws)
+        changed = restored = 0
+        rows = (db.query(JobApplication)
+                .filter(JobApplication.category == "it",
+                        JobApplication.status.notin_(("applied", "interviewing",
+                                                      "rejected", "offer",
+                                                      "no_response")))
+                .all())
+        for row in rows:
+            # 自訂清單 = 硬封鎖；內建 = 兩層判斷（見 classify.blocked_reason）
+            hit = blocked_reason(row.title or "", kws) if custom else blocked_reason(row.title or "")
+            if hit and row.status != "low_match":
+                log.info("blocked job #%s「%s」命中「%s」-> 標低匹配", row.id, row.title, hit)
+                row.status = "low_match"
+                row.match_reason = BLOCKED_REASON
+                changed += 1
+            elif not hit and row.match_reason == BLOCKED_REASON:
+                # 之前一次過封鎖規則太闊（例如「AI Engineer (保險公司)」）-> 還原
+                log.info("blocked job #%s「%s」唔再符合封鎖條件 -> 還原", row.id, row.title)
+                row.status = "pending_review"
+                row.match_reason = ""
+                restored += 1
+        if changed or restored:
+            db.commit()
+            log.info("blocked purge: 標低匹配 %s 份；還原 %s 份", changed, restored)
+    except Exception:  # noqa: BLE001
+        log.warning("blocked purge failed", exc_info=True)
+    finally:
+        db.close()
 
 
 def _uplift_legacy_caps() -> None:
@@ -220,6 +336,8 @@ def migrate() -> None:
     _backfill_posted_dates()
     _backfill_job_flags()
     _uplift_legacy_caps()
+    _migrate_ai_keyword_prefs()
+    _purge_blocked_jobs()
 
 
 def _backfill_job_flags() -> None:
@@ -241,9 +359,11 @@ def _backfill_job_flags() -> None:
         for row in db.query(JobApplication).all():
             flags = compute_flags(row)
             if (row.ai_match != flags["ai_match"]
+                    or row.ai_strength != flags.get("ai_strength", "")
                     or row.is_contract != flags["is_contract"]
                     or row.is_agency != flags["is_agency"]):
                 row.ai_match = flags["ai_match"]
+                row.ai_strength = flags.get("ai_strength", "")
                 row.is_contract = flags["is_contract"]
                 row.is_agency = flags["is_agency"]
                 changed += 1

@@ -32,6 +32,8 @@ class JobDraft:
     jd_text: str = ""
     posted_at: str = ""
     apply_method: str = "form"       # form | external_link | email
+    # 邊個搜尋字詞／分類頁帶入呢份工（AI 搜尋組 + 7 日限制靠佢追蹤）
+    source_query: str = ""
     contact_email: str = ""
     contact_person: str = ""
     external_url: str = ""

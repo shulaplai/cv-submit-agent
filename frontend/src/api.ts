@@ -110,6 +110,38 @@ export const api = {
       body: JSON.stringify({ ids, auto }),
     }),
   batchStatus: () => req<BatchStatus>("/api/jobs/batch-status"),
+  aiCheckPending: () =>
+    req<{ pending: number; batch_size: number; limit: number; enabled: boolean }>(
+      "/api/jobs/ai-check/pending"),
+  startAiCheck: (opts?: { limit?: number; batch_size?: number }) =>
+    req<{ started: boolean; limit?: number; batch_size?: number;
+          estimated_llm_calls?: number; message: string }>("/api/jobs/ai-check", {
+      method: "POST",
+      body: JSON.stringify(opts || {}),
+    }),
+  aiCheckStatus: () =>
+    req<{ running: boolean; checked: number; total: number; batches: number;
+          non_it: number; it_ai: number; it: number; failed_batches: number;
+          errors: string[]; marked_ids: number[] }>("/api/jobs/ai-check/status"),
+  resetAiCheck: (ids?: number[]) =>
+    req<{ ok: boolean; reset: number }>("/api/jobs/ai-check/reset", {
+      method: "POST",
+      body: JSON.stringify({ ids: ids || [] }),
+    }),
+  smtpStatus: () =>
+    req<{ configured: boolean; has_password: boolean; method: string;
+          config: Record<string, unknown> }>("/api/profile/smtp-status"),
+  testSmtp: () => req<{ ok: boolean; note: string }>("/api/profile/test-smtp", { method: "POST" }),
+  sendTestEmail: (to?: string) =>
+    req<{ ok: boolean; to: string; note: string }>("/api/profile/send-test-email", {
+      method: "POST",
+      body: JSON.stringify({ to }),
+    }),
+  mailStatus: () => req<{ ok: boolean; version: string; note: string; hint: string }>("/api/browser/mail-status"),
+  mailSelftest: () =>
+    req<{ ok: boolean; note: string; error: string; hint: string }>("/api/browser/mail-selftest", {
+      method: "POST",
+    }),
   browserStatus: () => req<{ using_real_chrome: boolean; chrome_running: boolean; cdp_url: string; note: string }>("/api/browser/status"),
   launchChrome: () => req<{ ok: boolean; restart_needed?: boolean; message: string }>("/api/browser/launch-chrome", { method: "POST" }),
   restartChrome: () => req<{ ok: boolean; restart_needed?: boolean; message: string }>("/api/browser/restart-chrome", { method: "POST" }),

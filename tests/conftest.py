@@ -26,6 +26,25 @@ from app.main import app  # noqa: E402
 from app.models import CoverLetter, JobApplication  # noqa: E402
 
 
+# ---------------------------------------------------------------------------
+# 測試用日期：**唔好用硬編碼日期**（例如 "2026-08-01"）—— 掃描器嘅「新鮮度」窗口
+# 係相對今日計，硬編碼日期會隨時間變舊，令一批測試無聲無息咁全部掛
+# （2026-10-05 就係咁樣中招）。一律用 days_ago() / days_ago_dmy() 計返。
+# ---------------------------------------------------------------------------
+def days_ago(n: int) -> str:
+    """n 日前嘅 ISO 日期（YYYY-MM-DD）。"""
+    from datetime import date, timedelta
+
+    return (date.today() - timedelta(days=n)).isoformat()
+
+
+def days_ago_dmy(n: int) -> str:
+    """n 日前嘅 DD/MM/YYYY（gov.hk 列表格式）。"""
+    from datetime import date, timedelta
+
+    return (date.today() - timedelta(days=n)).strftime("%d/%m/%Y")
+
+
 @pytest.fixture(scope="session")
 def client():
     init_db()

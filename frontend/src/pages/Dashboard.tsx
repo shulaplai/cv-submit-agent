@@ -26,6 +26,12 @@ export function Dashboard({
   // 預設「focus」= AI 優先 -> 高分 -> 新鮮（IT 頁）；切去一般頁會轉返「updated」
   const [sort, setSort] = useState("focus");
   const [shortlist, setShortlist] = useState<Job[]>([]);
+  // 批量 AI 檢查（LLM 分批搵出唔係 IT 嘅工）
+  const [aiPending, setAiPending] = useState(0);
+  const [aiRun, setAiRun] = useState<{
+    running: boolean; checked: number; total: number; batches: number;
+    non_it: number; it_ai: number; failed_batches: number; marked_ids: number[];
+  } | null>(null);
   const [addedFrom, setAddedFrom] = useState("");
   const [addedTo, setAddedTo] = useState("");
   const [addedPreset, setAddedPreset] = useState<"" | "today" | "7d" | "30d">("");
@@ -131,6 +137,7 @@ export function Dashboard({
       ]);
       setShortlist(picks.items);
       setData(jobs);
+      api.aiCheckPending().then((p) => setAiPending(p.pending)).catch(() => {});
       setStats({
         applied7: s.applied_last_7d,
         applied30: s.applied_last_30d,
@@ -236,6 +243,53 @@ export function Dashboard({
     }
   };
 
+  // 批量 AI 檢查：分批（預設 40 份/call）搵出「其實唔係 IT」嘅工，標低匹配
+  const runAiCheck = async () => {
+    if (!aiPending) {
+      pushToast("所有 IT 工都已經 AI 檢查過。", "info");
+      return;
+    }
+    try {
+      const r = await api.startAiCheck();
+      pushToast(r.message, "info");
+      setAiRun({ running: true, checked: 0, total: 0, batches: 0, non_it: 0,
+                 it_ai: 0, failed_batches: 0, marked_ids: [] });
+    } catch (e) {
+      pushToast(`AI 檢查啟動失敗: ${(e as Error).message}`, "err");
+    }
+  };
+
+  const resetAiCheck = async () => {
+    try {
+      const r = await api.resetAiCheck();
+      pushToast(`已還原 ${r.reset} 份 AI 檢查結果（會重新檢查）。`, "ok");
+      load();
+    } catch (e) {
+      pushToast(`還原失敗: ${(e as Error).message}`, "err");
+    }
+  };
+
+  useEffect(() => {
+    if (!aiRun?.running) return undefined;
+    const t = window.setInterval(async () => {
+      try {
+        const s = await api.aiCheckStatus();
+        setAiRun(s);
+        if (!s.running) {
+          window.clearInterval(t);
+          pushToast(
+            `AI 檢查完成：睇咗 ${s.checked} 份，判非 IT ${s.non_it} 份（已標低匹配），AI 工 ${s.it_ai} 份。`,
+            "ok",
+          );
+          load();
+        }
+      } catch {
+        /* ignore */
+      }
+    }, 2500);
+    return () => window.clearInterval(t);
+  }, [aiRun?.running, load, pushToast]);
+
   const openDetail = async (job: Job) => {
     try {
       const fresh = await api.getJob(job.id);
@@ -337,9 +391,9 @@ export function Dashboard({
         <button
           className={`chip-btn ${aiOnly ? "active" : ""}`}
           onClick={() => setAiOnly((v) => !v)}
-          title="淨係睇 AI 相關職位（標題或 JD 提到 AI／人工智能／機器學習／LLM／大模型…）"
+          title="淨係睇 AI／agent 相關職位（標題或 JD 提到 AI／agent；字眼可喺設定頁改）"
         >
-          ✦ AI 職位
+          ✦ AI／agent 職位
           {data.facets.ai !== undefined ? ` (${data.facets.ai})` : ""}
         </button>
         <button
@@ -514,6 +568,21 @@ export function Dashboard({
         <button className="btn" onClick={doBackfill} title="為最舊嘅未處理職位補上 JD / CL（會用 LLM）">
           ⇪ 補齊
         </button>
+        <button
+          className="btn primary"
+          onClick={runAiCheck}
+          disabled={aiRun?.running}
+          title="分批（每 40 份一個 call）用 AI 判斷邊啲職位其實唔係 IT／AI 工，判非 IT 會標低匹配（可以還原）"
+        >
+          {aiRun?.running
+            ? `🤖 AI 檢查中 ${aiRun.checked}/${aiRun.total || "…"}`
+            : `🤖 批量 AI 檢查${aiPending ? `（${aiPending} 份未檢查）` : ""}`}
+        </button>
+        {aiRun && !aiRun.running && aiRun.checked > 0 && (
+          <button className="chip-btn" onClick={resetAiCheck} title="清空 AI 判定，令佢下次再檢查（唔會刪工）">
+            ↩ 還原 AI 判定
+          </button>
+        )}
       </div>
 
       {(checked.size > 0 || batch?.running) && (
@@ -648,7 +717,18 @@ export function Dashboard({
                       未評分
                     </span>
                   )}
-                  {job.ai_match && <span className="chip ok" title="AI 相關職位（標題或 JD）">✦ AI</span>}
+                  {job.ai_match && (
+                    <span
+                      className={`chip ${job.ai_strength === "title" ? "ok" : ""}`}
+                      title={
+                        job.ai_strength === "title"
+                          ? "AI 相關（標題有 AI／agent）—— 呢類工 scan 到一定要收"
+                          : "只喺 JD 提到 AI／agent（標題冇）"
+                      }
+                    >
+                      {job.ai_strength === "title" ? "✦ AI／agent" : "AI（JD）"}
+                    </span>
+                  )}
                   {job.is_contract && (
                     <span className="chip low" title="合約／臨時／兼職／實習">
                       合約／臨時

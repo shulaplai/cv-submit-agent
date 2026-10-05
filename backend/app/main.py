@@ -41,6 +41,26 @@ async def _scheduled_scan():
     await _scan_job()
 
 
+def _check_mail_permission_on_boot() -> None:
+    """開機自檢：email 申請要 macOS Automation 權限控制 Mail。
+
+    權限係跟「邊個程式叫 Mail」——由 Terminal 跑 ./run.sh 通常已經批過；
+    如果用其他方式（背景服務／IDE／agent）跑就可能冇，令 email 申請全部 -10004。
+    呢度只 log 提醒，唔會阻礙開機。
+    """
+    try:
+        from .services.email_bot import mail_access
+
+        info = mail_access()
+        if info["ok"]:
+            log.info("Mail 權限：%s", info["note"])
+        else:
+            log.warning("Mail 權限未開／被拒（email 申請會改為 mailto fallback）：%s",
+                        info["note"])
+    except Exception as e:  # noqa: BLE001
+        log.debug("mail permission check skipped: %s", e)
+
+
 def _start_catchup_if_stale() -> None:
     """開機／喚醒時如果好耐冇掃過，即刻補一次（唔好白等下一晚）。"""
     from .routers.scan import last_scan_age_hours, start_catchup_scan
@@ -144,6 +164,7 @@ async def lifespan(app: FastAPI):
                  t.scan_day_interval, t.scan_hour, next_run,
                  settings.SCAN_MISFIRE_GRACE_SECONDS)
         _start_catchup_if_stale()
+    _check_mail_permission_on_boot()
     yield
     if _scheduler:
         _scheduler.shutdown(wait=False)

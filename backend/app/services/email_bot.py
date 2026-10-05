@@ -165,6 +165,237 @@ async def build_email_polished(row: JobApplication, cl_text: str, cv_path: str,
     return email, True, original
 
 
+# macOS Automation（自動化）權限被拒／未開：AppleScript 會回 -10004（errAEEventNotPermitted）
+_AUTOMATION_DENIED_MARKERS = ("-10004", "越權", "not authorized", "not permitted",
+                              "errAEEventNotPermitted")
+
+def host_app() -> str:
+    """邊個 app 啟動咗呢個 process（macOS TCC 自動化權限就係認住佢）。
+
+    ``__CFBundleIdentifier`` 由父 app 繼承落嚟，所以由 Terminal 跑就會見到
+    ``com.apple.Terminal``；由 VS Code 跑就係 ``com.microsoft.VSCode``。
+    診斷訊息會講返出嚟，等你知去「系統設定 → 自動化」邊一行勾。
+    """
+    import os
+
+    bundle = (os.environ.get("__CFBundleIdentifier") or "").strip()
+    term = (os.environ.get("TERM_PROGRAM") or "").strip()
+    if bundle:
+        return f"{term or bundle}（{bundle}）"
+    return term or "（查唔到，可能係背景服務）"
+
+
+def permission_hint() -> str:
+    """權限被拒嘅完整教路（含「啟動 server 嘅 app」名）。"""
+    return (
+        f"{MAIL_PERMISSION_HINT}\n"
+        f"👉 你嘅 server 而家由 **{host_app()}** 啟動 —— 喺「自動化」清單揾佢，"
+        f"勾返「郵件 / Mail」。\n"
+        f"👉 如果佢唔喺清單／勾唔到：喺同一個 Terminal 跑 "
+        f"`tccutil reset AppleEvents` 再試（會重新彈授權對話框）。"
+    )
+
+
+MAIL_PERMISSION_HINT = (
+    "⚠ macOS 唔准我用 AppleScript 控制 Mail（自動化權限未開或者上次被拒）。"
+    "解決：① 系統設定 → 隱私權與安全性 → 自動化 → 揾「終端機／Terminal」"
+    "（或你啟動 server 嗰個程式）→ 勾返「郵件 / Mail」；② 之後重啟 server 再試。"
+    "（TCC 權限係跟「邊個程式叫 Mail」，所以由你自己嘅 Terminal 跑 ./run.sh 最穩）"
+)
+
+
+def _applescript_error(stderr: str, *, what: str = "AppleScript") -> str:
+    """AppleScript 錯誤 -> 人話。特別處理 macOS Automation 權限被拒（-10004）。"""
+    text = (stderr or "").strip()
+    low = text.lower()
+    if any(m.lower() in low for m in _AUTOMATION_DENIED_MARKERS):
+        return permission_hint()
+    return f"{what} 失敗: {text[:300]}"
+
+
+# ⚠ 唔可以用 `get version` 做權限檢查：macOS 唔需要 Automation 權限就答得到
+#   （`get name` 一樣），所以會出現「檢查 OK 但真發送 -10004」嘅假陽性。
+#   `count of accounts` 係真 Apple Event：有權限就回數字，冇權限就 -10004。
+ACCESS_PROBE = 'tell application "Mail" to count of accounts'
+
+
+def mail_access() -> dict:
+    """檢查「呢個 process 可唔可以真正控制 Mail」（唔會開信、唔會寄信）。"""
+    try:
+        r = subprocess.run(["osascript", "-e", ACCESS_PROBE],
+                           capture_output=True, text=True, timeout=15)
+        version = subprocess.run(["osascript", "-e", 'tell application "Mail" to get version'],
+                                 capture_output=True, text=True, timeout=15)
+        ver = (version.stdout or "").strip() if version.returncode == 0 else ""
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "version": "", "note": f"跑唔到 osascript：{e}"}
+    if r.returncode == 0:
+        accounts = (r.stdout or "").strip()
+        return {"ok": True, "version": ver, "host_app": host_app(),
+                "note": f"✓ 可以控制 Mail（版本 {ver}，帳戶數 {accounts}）—— "
+                        f"自動發送／開 draft 應該正常"}
+    log.warning("mail permission probe failed: %s", (r.stderr or "").strip()[:300])
+    return {"ok": False, "version": ver, "host_app": host_app(),
+            "note": _applescript_error(r.stderr, what="檢查 Mail 權限")}
+
+
+SELFTEST_SCRIPT = """
+tell application "Mail"
+	set newMsg to make new outgoing message with properties {subject:"[cv-submit] Mail 權限測試", content:"呢封係權限測試，會即刻關閉，唔會寄出。", visible:false}
+	close newMsg saving no
+end tell
+""".strip()
+
+
+def mail_selftest() -> dict:
+    """真正做一次「開一封 draft」（冇收件人、即刻關閉、唔會寄出）。
+
+    `get version` 成功唔代表 `make new outgoing message` 一定成功（TCC 權限／Mail
+    狀態都可能唔同），所以診斷要用呢個。失敗時回傳人話 + 原始錯誤。
+    """
+    try:
+        r = subprocess.run(["osascript", "-e", SELFTEST_SCRIPT],
+                           capture_output=True, text=True, timeout=30)
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": f"跑唔到 osascript：{e}", "note": "", "stderr": ""}
+    if r.returncode == 0:
+        return {"ok": True, "error": "", "stderr": "", "host_app": host_app(),
+                "note": "✓ 可以開 Mail draft（＝發 email 申請嘅第一步冇問題）"}
+    note = _applescript_error(r.stderr, what="Mail 自我測試")
+    log.warning("mail selftest failed: %s", (r.stderr or "").strip()[:300])
+    return {"ok": False, "error": (r.stderr or "").strip()[:300], "note": note,
+            "host_app": host_app(), "stderr": (r.stderr or "").strip()[:300]}
+
+
+def smtp_config(tuning=None) -> dict:
+    """有效 SMTP 設定（Settings 頁 -> .env）。"""
+    from .tuning import load_tuning
+
+    t = tuning or load_tuning()
+    return {
+        "method": (t.send_method or "auto").strip().lower(),
+        "host": (t.smtp_host or "").strip(),
+        "port": int(t.smtp_port or 587),
+        "user": (t.smtp_user or "").strip(),
+        "password": t.smtp_password or "",
+        "from_name": (t.smtp_from_name or settings.APPLICANT_NAME or "").strip(),
+        "from_email": (t.smtp_from_email or t.smtp_user or "").strip(),
+        "use_ssl": bool(t.smtp_use_ssl),
+        "bcc_self": bool(t.smtp_bcc_self),
+    }
+
+
+def smtp_ready(cfg: dict | None = None) -> bool:
+    """SMTP 設定齊唔齊（host + user + password + 寄件人）。"""
+    cfg = cfg or smtp_config()
+    return bool(cfg["host"] and cfg["user"] and cfg["password"] and cfg["from_email"])
+
+
+def _smtp_error_hint(err: Exception, cfg: dict) -> str:
+    text = str(err)
+    low = text.lower()
+    if "auth" in low or "535" in text or "534" in text or "535" in text:
+        return (f"SMTP 登入失敗（{cfg['user']}@{cfg['host']}）："
+                "多數要用「應用程式密碼」而唔係你平時嘅登入密碼 —— "
+                "Gmail：Google 帳戶 → 安全性 → 兩步驗證 → 應用程式密碼（16 位）；"
+                "iCloud：Apple 帳戶 → 登入與安全性 → 應用程式專用密碼；"
+                "Outlook/公司 Mail 就可能要管理員開 SMTP AUTH。"
+                f"（原始錯誤：{text[:200]}）")
+    if "certificate" in low or "ssl" in low:
+        return (f"SMTP TLS/SSL 出錯：465 通常要開「用 SSL」；587 用 STARTTLS。"
+                f"（原始錯誤：{text[:200]}）")
+    if "timed out" in low or "timeout" in low:
+        return f"SMTP 連線逾時（{cfg['host']}:{cfg['port']}）—— 檢查網絡／port 有冇被封。（{text[:160]}）"
+    return f"SMTP 寄信失敗：{text[:300]}"
+
+
+def send_email_smtp(email: dict, cfg: dict | None = None) -> tuple[bool, str]:
+    """用 SMTP 直接寄出（內文 + CV 附件），**唔需要 macOS Mail 權限**。"""
+    import smtplib
+    import ssl
+    from email.message import EmailMessage
+
+    cfg = cfg or smtp_config()
+    if not email.get("to"):
+        return False, "呢份工冇聯絡 email，唔可以寄。"
+    if not smtp_ready(cfg):
+        return False, "SMTP 未設定好（要去設定頁填 host／帳號／應用程式密碼）。"
+
+    msg = EmailMessage()
+    msg["Subject"] = email.get("subject", "")
+    msg["From"] = (f"{cfg['from_name']} <{cfg['from_email']}>" if cfg["from_name"]
+                   else cfg["from_email"])
+    msg["To"] = email["to"]
+    if cfg["bcc_self"] and cfg["from_email"]:
+        msg["Bcc"] = cfg["from_email"]
+    msg.set_content(email.get("body", ""))
+
+    attachment = email.get("attachment") or ""
+    if attachment and Path(attachment).exists():
+        data = Path(attachment).read_bytes()
+        msg.add_attachment(data, maintype="application", subtype="pdf",
+                           filename=Path(attachment).name)
+
+    try:
+        context = ssl.create_default_context()
+        if cfg["use_ssl"]:
+            server = smtplib.SMTP_SSL(cfg["host"], cfg["port"], timeout=45,
+                                      context=context)
+        else:
+            server = smtplib.SMTP(cfg["host"], cfg["port"], timeout=45)
+        try:
+            if not cfg["use_ssl"]:
+                server.starttls(context=context)
+            server.login(cfg["user"], cfg["password"])
+            server.send_message(msg)
+        finally:
+            try:
+                server.quit()
+            except Exception:  # noqa: BLE001
+                pass
+    except Exception as e:  # noqa: BLE001
+        note = _smtp_error_hint(e, cfg)
+        log.warning("SMTP send failed: %s", note)
+        return False, note
+
+    attach_note = f"（已附 CV：{Path(attachment).name}）" if attachment else ""
+    bcc_note = f"（已 BCC 一份去 {cfg['from_email']}）" if (cfg["bcc_self"] and cfg["from_email"]) else ""
+    log.info("SMTP sent to %s %s", email["to"], attach_note)
+    return True, f"✔ Email 已自動寄出（{email['to']}）{attach_note}{bcc_note}"
+
+
+def test_smtp(cfg: dict | None = None) -> dict:
+    """連線 + 登入測試（唔會寄信）。回傳 {ok, note}。"""
+    import smtplib
+    import ssl
+
+    cfg = cfg or smtp_config()
+    if not cfg["host"]:
+        return {"ok": False, "note": "未填 SMTP 伺服器（例如 smtp.gmail.com）"}
+    if not (cfg["user"] and cfg["password"]):
+        return {"ok": False, "note": "未填 SMTP 帳號或應用程式密碼"}
+    try:
+        context = ssl.create_default_context()
+        if cfg["use_ssl"]:
+            server = smtplib.SMTP_SSL(cfg["host"], cfg["port"], timeout=20,
+                                      context=context)
+        else:
+            server = smtplib.SMTP(cfg["host"], cfg["port"], timeout=20)
+        try:
+            if not cfg["use_ssl"]:
+                server.starttls(context=context)
+            server.login(cfg["user"], cfg["password"])
+        finally:
+            try:
+                server.quit()
+            except Exception:  # noqa: BLE001
+                pass
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "note": _smtp_error_hint(e, cfg)}
+    return {"ok": True,
+            "note": f"✓ SMTP 連線同登入成功（{cfg['user']}@{cfg['host']}:{cfg['port']}）"}
+
+
 def _apple_str(text: str) -> str:
     """Return `text` as an AppleScript string-literal EXPRESSION.
 
@@ -205,7 +436,9 @@ end tell
             capture_output=True, text=True, timeout=30,
         )
         if result.returncode != 0:
-            return False, f"AppleScript 失敗: {result.stderr.strip()[:300]}"
+            log.warning("Mail compose failed (draft): %s", (result.stderr or "").strip()[:300])
+            return False, _applescript_error(result.stderr)
+        log.info("Mail draft opened（收件人 %s）", email.get("to", ""))
         return True, "macOS Mail 已開好一封預填嘅申請信，請檢查後自行發送。"
     except Exception as e:  # noqa: BLE001
         return False, f"開 Mail 失敗: {e}"
@@ -231,10 +464,14 @@ end tell
         r = subprocess.run(["osascript", "-e", script],
                            capture_output=True, text=True, timeout=30)
         if r.returncode == 0:
+            log.info("CV attached to Mail draft: %s", cv_path)
             return True, "已附上 CV。"
         # attachment of the just-created draft may need the draft selected;
         # surface the error but do not fail the whole flow.
         log.warning("attach CV failed: %s", r.stderr.strip()[:200])
+        msg = _applescript_error(r.stderr, what="自動附件")
+        if msg == MAIL_PERMISSION_HINT:
+            return False, "開咗郵件但自動附件失敗（權限問題），請手動加上 CV。"
         return False, "開咗郵件但自動附件失敗，請手動加上 CV。"
     except Exception as e:  # noqa: BLE001
         log.warning("attach CV failed: %s", e)
@@ -310,6 +547,34 @@ async def open_email_compose(row: JobApplication, cl_text: str, send: bool = Fal
                 "body_original": original_body, "polished": polished}
 
     if send:
+        # 1) SMTP 優先：直接由 Python 寄出（內文 + CV 附件），完全唔需要 macOS 權限
+        cfg_smtp = smtp_config()
+        method = cfg_smtp["method"] or "auto"
+        use_smtp = method == "smtp" or (method == "auto" and smtp_ready(cfg_smtp))
+        if use_smtp:
+            ok_s, note_s = send_email_smtp(email, cfg_smtp)
+            if ok_s:
+                return {"ok": True, "kind": "email_sent", "to": email["to"],
+                        "message": f"{note_s} {polish_tag}{cv_tag}".strip(),
+                        "submitted": True, "preview": _preview()}
+            if method == "smtp":
+                # 用戶指定用 SMTP -> 唔好靜靜改用 Mail，直接報錯
+                return {"ok": False, "kind": "smtp_failed", "to": email["to"],
+                        "message": f"{note_s} {polish_tag}{cv_tag}".strip(),
+                        "submitted": False, "preview": _preview()}
+            log.warning("SMTP 失敗，改用 macOS Mail：%s", note_s)
+
+        # 2) macOS Mail（AppleScript）：要「自動化權限」
+        access = mail_access()
+        if not access["ok"]:
+            ok2, note2 = fallback_mailto(email)
+            msg = f"{note2} {polish_tag}{cv_tag}".strip()
+            return {"ok": ok2, "kind": "email_fallback", "to": email["to"],
+                    "message": (f"{msg}\n{access['note']}\n"
+                                "💡 想完全自動寄出（連 CV 附件）唔想再撞權限問題："
+                                "去設定頁填 SMTP（Gmail／iCloud 應用程式密碼），"
+                                "之後會直接用 SMTP 寄，唔需要 macOS Mail。"),
+                    "submitted": False, "preview": _preview()}
         ok, note = send_email_via_mail(email)
         if ok:
             warn = "" if has_cv else "（⚠ 冇 CV 附件）"
@@ -324,8 +589,22 @@ async def open_email_compose(row: JobApplication, cl_text: str, send: bool = Fal
                     "message": f"自動發送失敗（{note}），已改為開 draft 俾你手動發送。"
                                f"{note2} {polish_tag}{cv_tag}".strip(),
                     "submitted": False, "preview": _preview()}
-        return {"ok": False, "kind": "email_failed", "to": email["to"],
-                "message": f"自動發送同開 Mail 都失敗：{note}；{note2}",
+        # 兩條 Mail 路都失敗 -> 最後一著：mailto + 剪貼簿（唔會卡死）
+        ok3, note3 = fallback_mailto(email)
+        return {"ok": ok3, "kind": "email_fallback" if ok3 else "email_failed",
+                "to": email["to"],
+                "message": f"自動發送同開 Mail 都失敗：{note}；{note2}。{note3}",
+                "submitted": False, "preview": _preview()}
+
+    # 半自動模式：SMTP 模式下唔應該開 Mail（會撞權限又冇必要）—— 直接話俾用戶知
+    # 「撳確認就會自動寄出」，內文同 CV 都已經備好。
+    cfg_semi = smtp_config()
+    if (cfg_semi["method"] == "smtp"
+            or (cfg_semi["method"] == "auto" and smtp_ready(cfg_semi))):
+        return {"ok": True, "kind": "needs_confirm", "to": email["to"],
+                "message": (f"SMTP 模式：內文（已潤色）＋ CV 附件已經備好，"
+                            f"唔會開 Mail。撳「確認並自動發送」就會即刻寄出。"
+                            f" {polish_tag}{cv_tag}").strip(),
                 "submitted": False, "preview": _preview()}
 
     ok, note = compose_in_mail(email)
@@ -373,7 +652,9 @@ end tell
         r = subprocess.run(["osascript", "-e", script],
                            capture_output=True, text=True, timeout=60)
         if r.returncode == 0:
+            log.info("Mail auto-sent to %s", email.get("to", ""))
             return True, "Email 已透過 macOS Mail 自動發送。"
-        return False, f"Mail 發送失敗: {r.stderr.strip()[:300]}"
+        log.warning("Mail auto-send failed: %s", (r.stderr or "").strip()[:300])
+        return False, f"Mail 發送失敗: {_applescript_error(r.stderr)}"
     except Exception as e:  # noqa: BLE001
         return False, f"Mail 發送失敗: {e}"

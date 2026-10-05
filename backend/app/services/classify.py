@@ -266,6 +266,13 @@ class TrackConfig:
     priority_keywords: list[str] = field(default_factory=list)
     priority_extra_max: int = 50
     hard_cap: int = 0         # 每渠道硬上限（0 = 用內建：gov.hk 30 頁／OfferToday 12 scroll）
+    # ---- AI 搜尋組（用戶要求：專門搵 AI／agent 工，7 日內、過期即停）----
+    ai_search_terms: list[str] = field(default_factory=list)
+    ai_search_max_searches: int = 0
+    ai_search_max_age_days: int = 7
+    ai_stale_action: str = "channel"   # channel = 停該渠道；scan = 暫停成個掃描
+    # 保險／地產／sales agent 類封鎖字眼（絕對否決，唔會入 IT 軌）
+    blocked_keywords: list[str] = field(default_factory=list)
 
     @staticmethod
     def defaults(name: str) -> "TrackConfig":
@@ -276,6 +283,14 @@ class TrackConfig:
         it_kws = resolve_it_keywords()
         non_it = resolve_non_it_keywords()
         t = load_tuning()
+        from .tuning import ai_search_terms as _ai_terms
+        ai_group = dict(
+            blocked_keywords=resolve_blocked_keywords(),
+            ai_search_terms=_ai_terms(t),
+            ai_search_max_searches=t.ai_search_max_searches,
+            ai_search_max_age_days=t.ai_search_max_age_days,
+            ai_stale_action=t.ai_stale_action,
+        )
         bypass = dict(
             cap_bypass_enabled=t.cap_bypass_enabled,
             cap_bypass_min_score=t.cap_bypass_min_score,
@@ -289,6 +304,7 @@ class TrackConfig:
                 govhk_max_jobs=settings.GOVHK_IT_MAX_JOBS,
                 offertoday_max_per_search=settings.OFFERTODAY_MAX_PER_SEARCH,
                 **bypass,
+                **ai_group,
             )
         general_kws = resolve_general_keywords()
         return TrackConfig(
@@ -302,7 +318,95 @@ class TrackConfig:
             ),
             max_searches=settings.OFFERTODAY_GENERAL_MAX_SEARCHES,
             **bypass,
+            **ai_group,
         )
+
+
+# 「保險／地產／sales agent」類職位：**絕對否決**（唔理有冇強 IT 字眼）。
+# 為咩要絕對：呢類標題好多時夾雜 IT 字（例：「網路銷售代理」有『網路』＝強 IT 字），
+# 令之前嘅軟性排除失效，結果保險／地產 agent 工照入 IT 軌（實測 40 份）。
+# 用戶要求：呢類唔要。清單可以喺設定頁改（profile.it_blocked_keywords）。
+# 硬封鎖：明顯係 sales／agent 角色，一律唔要（唔理有冇 tech 字）
+DEFAULT_BLOCKED_SALES_KEYWORDS = [
+    "代理", "經紀", "營業員", "佣金", "跑數", "門市", "直銷",
+    "insurance agent", "property agent", "estate agent", "sales agent",
+    "real estate agent", "commission based",
+]
+
+# 行業字眼：職位本身係 AI／dev（見 _TECH_RESCUE）就保留
+# （例：「AI Engineer (大型保險公司)」係真 AI 工，唔應該因為「保險」兩個字被殺）
+DEFAULT_BLOCKED_INDUSTRY_KEYWORDS = [
+    # 「前線」放呢層：前線銷售要封，但「前線部署工程師」(FDE) 係真技術工，
+    # 有技術訊號就會保留
+    "前線",
+    "保險", "地產", "房地產", "樓盤", "物業", "經紀行",
+    "insurance", "real estate", "property management", "brokerage",
+]
+
+# 行業字眼嘅「例外訊號」：標題有呢啲 = 真技術職位，唔當 sales
+_TECH_RESCUE_KEYWORDS = [
+    "ai", "agent developer", "ai agent", "developer", "programmer", "software",
+    "程式", "編程", "軟件", "軟體", "系統", "數據", "資料庫", "演算法", "計算機",
+    "data", "python", "java", "javascript", "typescript", "react", "node", "sql",
+    "devops", "cloud", "雲端", "前端", "後端", "full stack", "full-stack", "llm",
+    "資訊科技", "it support", "helpdesk", "qa", "測試", "網絡工程師", "系統工程師",
+]
+
+# （相容舊名）
+DEFAULT_BLOCKED_KEYWORDS = DEFAULT_BLOCKED_SALES_KEYWORDS + DEFAULT_BLOCKED_INDUSTRY_KEYWORDS
+
+
+def resolve_blocked_keywords(profile_text: str = "") -> list[str]:
+    """有效「封鎖字眼」。
+
+    profile（設定頁）有填 = 你自訂嘅硬封鎖清單（完全取代內建）；
+    留空 = 內建兩層清單（sales 硬封 + 行業字眼有技術例外）。
+    """
+    text = (profile_text or "").strip()
+    if text:
+        kws = parse_keywords(text)
+        if kws:
+            return kws
+    return list(DEFAULT_BLOCKED_KEYWORDS)
+
+
+def builtin_block_config() -> tuple[list[str], list[str]]:
+    """內建 (sales 硬封清單, 行業字眼清單)—— 設定頁顯示用。"""
+    return list(DEFAULT_BLOCKED_SALES_KEYWORDS), list(DEFAULT_BLOCKED_INDUSTRY_KEYWORDS)
+
+
+def blocked_reason(title: str, blocked: list[str] | None = None) -> str:
+    """標題係唔係「保險／地產 sales agent」類（回傳命中嘅字，否則 ""）。
+
+    兩層判斷（用戶要求「地產或者保險嘅都唔要」，但唔想殺錯真 AI 工）：
+      1. **硬封鎖**（代理／經紀／跑數／insurance agent…）：一律唔要。
+      2. **行業字眼**（保險／地產／物業…）：只有當標題**冇**技術職位訊號
+         （AI／developer／系統／程式／數據…）先封鎖 —— 所以
+         「AI Engineer (大型保險公司)」會保留，「物業工程師」照封。
+    ``blocked`` 有傳就當成硬封鎖清單（設定頁自訂）。
+    """
+    t = title or ""
+    if not t:
+        return ""
+    if blocked is not None:
+        for kw in blocked:
+            if kw and match_keyword(kw, t):
+                return kw
+        return ""
+    for kw in DEFAULT_BLOCKED_SALES_KEYWORDS:
+        if match_keyword(kw, t):
+            return kw
+    for kw in DEFAULT_BLOCKED_INDUSTRY_KEYWORDS:
+        if match_keyword(kw, t):
+            if any(match_keyword(r, t) for r in _TECH_RESCUE_KEYWORDS):
+                return ""          # 真技術職位（例：AI Engineer @ 保險公司）
+            return kw
+    return ""
+
+
+def tech_role_score(title: str) -> int:
+    """標題嘅技術職位訊號數量（俾 AI 檢查／除錯用）。"""
+    return sum(1 for r in _TECH_RESCUE_KEYWORDS if match_keyword(r, title or ""))
 
 
 def is_priority_job(title: str, extra_text: str = "", skills: list[str] | None = None,

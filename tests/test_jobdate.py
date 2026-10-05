@@ -1,4 +1,5 @@
 """Tests for posting-date parsing and the scan freshness filter."""
+from conftest import days_ago, days_ago_dmy
 import asyncio
 from datetime import date, timedelta
 
@@ -53,7 +54,8 @@ def test_parse_unknown_or_empty():
 def test_parse_offertoday_jsonld_iso():
     # OfferToday detail pages now expose datePosted as ISO yyyy-mm-dd
     assert parse_posted_date("2026-08-05") == date(2026, 8, 5)
-    assert is_fresh("2026-08-05", 60) is True
+    assert is_fresh(days_ago(1), 60) is True          # 新鮮度相對今日計
+    assert is_fresh(days_ago(120), 60) is False
     assert is_fresh("2026-01-05", 60) is False
 
 
@@ -64,6 +66,7 @@ def test_backfill_posted_dates_parses_strings(db):
 
     dmy = JobApplication(platform="govhk_it", job_id_on_platform="b1", title="AI 工程師",
                          posted_at="11/08/2026")
+    # 解析測試：用固定日期（唔關新鮮度事，所以唔會隨時間失效）
     iso = JobApplication(platform="offertoday", job_id_on_platform="b2", title="AI Developer",
                          posted_at="2026-08-05")
     unk = JobApplication(platform="offertoday", job_id_on_platform="b3", title="AI Analyst",
@@ -85,7 +88,8 @@ def test_backfill_posted_dates_parses_strings(db):
 
 def test_is_fresh_keeps_recent_and_unknown():
     assert is_fresh("1d ago", 60) is True
-    assert is_fresh("11/08/2026", 60) is True
+    assert is_fresh(days_ago_dmy(5), 60) is True
+    assert is_fresh(days_ago(30), 60) is True
     # OfferToday list cards have no posting date yet -> kept
     assert is_fresh("", 60) is True
     assert is_fresh("成為最早的申請者", 60) is True
@@ -113,7 +117,7 @@ def test_run_scan_filters_stale_drafts(db, monkeypatch):
     monkeypatch.setattr(settings, "MAX_ENRICH_PER_SCAN", 0)  # no LLM in tests
 
     fresh = JobDraft(platform="govhk", job_id="11-26-0000101",
-                     title="AI 工程師", posted_at="01/08/2026")
+                     title="AI 工程師", posted_at=days_ago_dmy(1))
     stale = JobDraft(platform="govhk", job_id="11-26-0000102",
                      title="AI 工程師", posted_at="01/03/2026")
     unknown = JobDraft(platform="offertoday", job_id="tok",
@@ -153,7 +157,7 @@ def test_run_scan_caps_at_max_jobs_fair_share(db, monkeypatch):
     # 非優先標題（AI 相關標題而家有「高分豁免」唔受上限限制，見
     # tests/test_priority_bypass.py）
     gov = [JobDraft(platform="govhk", job_id=f"11-26-00002{i:02d}",
-                    title="系統工程師", posted_at="01/08/2026") for i in range(3)]
+                    title="系統工程師", posted_at=days_ago_dmy(1)) for i in range(3)]
     ot = [JobDraft(platform="offertoday", job_id=f"tok{i}",
                    title="Web Developer", posted_at="") for i in range(3)]
 
@@ -186,7 +190,7 @@ def test_run_scan_cap_disabled_when_zero(db, monkeypatch):
     monkeypatch.setattr(settings, "MAX_SCAN_JOBS", 0)
 
     drafts = [JobDraft(platform="govhk", job_id=f"11-26-00003{i:02d}",
-                       title="AI 工程師", posted_at="01/08/2026") for i in range(4)]
+                       title="AI 工程師", posted_at=days_ago_dmy(1)) for i in range(4)]
 
     async def fake_scrape(session, track="it", cfg=None, channels=None):
         return drafts
@@ -215,9 +219,9 @@ def test_run_scan_stop_persists_scraped_drafts(db, monkeypatch):
     monkeypatch.setattr(settings, "MAX_SCAN_JOBS", 0)
 
     first = JobDraft(platform="govhk", job_id="11-26-0000401",
-                     title="AI 工程師", posted_at="01/08/2026")
+                     title="AI 工程師", posted_at=days_ago_dmy(1))
     second = JobDraft(platform="govhk", job_id="11-26-0000402",
-                      title="AI 工程師", posted_at="01/08/2026")
+                      title="AI 工程師", posted_at=days_ago_dmy(1))
 
     async def fake_scrape(session, track="it", cfg=None, channels=None):
         scan_control.request_stop()  # stop requested DURING scraping
@@ -258,7 +262,7 @@ def test_run_scan_stop_between_platforms(db, monkeypatch):
         called["n"] += 1
         state["stop"] = True  # request stop right after platform A completes
         return [JobDraft(platform="govhk", job_id="11-26-0000501",
-                         title="AI 工程師", posted_at="01/08/2026")]
+                         title="AI 工程師", posted_at=days_ago_dmy(1))]
 
     async def scrape_b(session, track="it", cfg=None, channels=None):
         called["n"] += 1
@@ -299,7 +303,7 @@ def test_govhk_too_old_helper(monkeypatch):
 
     monkeypatch.setattr(settings, "MAX_JOB_AGE_DAYS", 60)
     assert _too_old("01/03/2026") is True   # older than 60 days
-    assert _too_old("01/08/2026") is False  # recent
+    assert _too_old(days_ago_dmy(1)) is False  # recent
     assert _too_old("") is False            # unknown -> keep
     monkeypatch.setattr(settings, "MAX_JOB_AGE_DAYS", 0)
     assert _too_old("01/03/2026") is False  # filter disabled
@@ -517,7 +521,7 @@ def test_govhk_it_caps_at_50(monkeypatch):
 
     async def fake_fetch_detail(session, item, platform, category=""):
         return JobDraft(platform=platform, job_id=item["job_id"],
-                        title=item["title"], posted_at="01/08/2026")
+                        title=item["title"], posted_at=days_ago_dmy(1))
 
     async def fake_human_delay(*a, **k):
         pass

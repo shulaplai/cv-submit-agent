@@ -6,6 +6,7 @@
   - track 級 MAX_SCAN_JOBS 一樣有豁免
   - 豁免關掉 = 完全舊行為
 """
+from conftest import days_ago
 import asyncio
 
 from app.config import settings
@@ -141,7 +142,7 @@ def _scan_harness(monkeypatch, drafts):
 
     async def fake_fetch_detail(session, d):
         d.jd_text = f"JD {d.job_id}"
-        d.posted_at = "2026-08-01"
+        d.posted_at = days_ago(1)
         return d
 
     async def fake_get_browser(platform):

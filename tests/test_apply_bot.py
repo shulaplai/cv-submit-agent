@@ -591,11 +591,11 @@ async def test_offertoday_intro_ai_agent_ladder(monkeypatch):
     monkeypatch.setattr(apply_bot, "generate_after_cv_intro", fake_gen)
     empty_cfg = {k: "" for k in cfg}
     ai_row2 = FakeRow()
-    ai_row2.title = "機器學習工程師"
+    ai_row2.title = "AI Agent Developer"      # 有 agent 字眼 -> AI 版階梯
     ai_row2.jd_language = "en"
     assert await _offertoday_intro(ai_row2, empty_cfg) == "生成嘅 AI 版"
     # topic 要係 ai、語言跟 JD，而且一定要傳埋 title（先讀得到對應版本嘅 CV）
-    assert seen == {"topic": "ai", "lang": "en", "title": "機器學習工程師"}
+    assert seen == {"topic": "ai", "lang": "en", "title": "AI Agent Developer"}
 
 
 def test_intro_topic_picks_ai_from_title():

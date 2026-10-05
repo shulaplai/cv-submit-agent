@@ -63,6 +63,9 @@ class Profile(Base):
     # ---- Job-track settings (IT vs 一般), editable in the Settings page ----
     it_track_enabled: Mapped[bool] = mapped_column(default=True)
     general_track_enabled: Mapped[bool] = mapped_column(default=True)
+    # 保險／地產／sales agent 類「封鎖字眼」（絕對否決，改都改唔到入 IT 軌；
+    # 留空 = 內建清單。用戶要求：呢類職位唔要）
+    it_blocked_keywords: Mapped[str] = mapped_column(Text, default="")
     # 「唔當 IT」嘅職位字眼（擋住 engineer／工程師／技術員 等過闊字；空 = 內建）
     non_it_keywords: Mapped[str] = mapped_column(Text, default="")
     # 一般工「想去嘅地點」白名單（逗號分隔，空 = 唔篩地點）
@@ -104,6 +107,26 @@ class Profile(Base):
     max_enrich_it_per_scan: Mapped[int] = mapped_column(Integer, default=-1)  # -1 = .env；0 = 不限
     # 一般工要唔要 LLM 評分（預設唔要：省 API，只有 IT 工評分）
     enrich_general_jobs: Mapped[bool] = mapped_column(default=False)
+    # ---- 自動寄 email（SMTP，唔需要 macOS Mail 權限）----
+    send_method: Mapped[str] = mapped_column(String(10), default="")   # "" = .env
+    smtp_host: Mapped[str] = mapped_column(String(200), default="")
+    smtp_port: Mapped[int] = mapped_column(Integer, default=0)         # 0 = .env
+    smtp_user: Mapped[str] = mapped_column(String(200), default="")
+    smtp_password: Mapped[str] = mapped_column(String(300), default="")
+    smtp_from_name: Mapped[str] = mapped_column(String(200), default="")
+    smtp_from_email: Mapped[str] = mapped_column(String(200), default="")
+    smtp_use_ssl: Mapped[bool] = mapped_column(default=False)
+    smtp_bcc_self: Mapped[bool] = mapped_column(default=True)
+    # ---- 批量 AI 檢查（LLM 分批判斷係唔係真 IT 工）----
+    ai_check_enabled: Mapped[bool] = mapped_column(default=False)
+    ai_check_batch_size: Mapped[int] = mapped_column(Integer, default=0)   # 0 = .env
+    ai_check_limit: Mapped[int] = mapped_column(Integer, default=0)        # 0 = .env
+    ai_check_after_scan: Mapped[bool] = mapped_column(default=False)
+    # ---- AI 搜尋組（搵 AI／agent 工）----
+    ai_search_terms: Mapped[str] = mapped_column(Text, default="")        # 空 = .env
+    ai_search_max_searches: Mapped[int] = mapped_column(Integer, default=0)  # 0 = .env
+    ai_search_max_age_days: Mapped[int] = mapped_column(Integer, default=-1)  # -1 = .env
+    ai_stale_action: Mapped[str] = mapped_column(String(10), default="")  # "" = .env
     # ---- 掃描節奏（0 = .env 預設）----
     scan_job_delay_min_seconds: Mapped[float] = mapped_column(Float, default=0.0)
     scan_job_delay_max_seconds: Mapped[float] = mapped_column(Float, default=0.0)
@@ -166,6 +189,14 @@ class JobApplication(Base):
     is_contract: Mapped[bool] = mapped_column(Boolean, default=False)  # 合約／臨時／兼職／實習
     is_agency: Mapped[bool] = mapped_column(Boolean, default=False)    # 外派／獵頭／人力資源公司
     match_level: Mapped[str] = mapped_column(String(10), default="")   # "" | under | fit | over
+    # AI 相關度："" = 唔相關；"title" = 標題有 AI／agent；"jd" = 只喺 JD 提到
+    ai_strength: Mapped[str] = mapped_column(String(10), default="")
+    # 邊個搜尋字詞／分類頁帶入呢份工（用戶要求：追蹤 AI 搜尋組 + 7 日限制）
+    source_query: Mapped[str] = mapped_column(String(120), default="")
+    # ---- 批量 AI 檢查（LLM 分批判斷係唔係真 IT／AI 工）----
+    ai_verdict: Mapped[str] = mapped_column(String(10), default="")  # "" | it_ai | it | non_it
+    ai_verdict_reason: Mapped[str] = mapped_column(Text, default="")
+    ai_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     outcome_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # ---- 發送前 AI 潤色（發送內容 + 潤色來源 key，避免重複洗 LLM）----
     email_body_polished: Mapped[str] = mapped_column(Text, default="")

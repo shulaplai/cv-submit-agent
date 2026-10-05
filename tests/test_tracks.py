@@ -1,4 +1,5 @@
 """Tests for the 一般 (non-IT) track channels + OfferToday publish date."""
+from conftest import days_ago
 import asyncio
 from datetime import date, timedelta
 from pathlib import Path
@@ -90,18 +91,43 @@ def test_offertoday_it_track_adds_keyword_searches():
     from app.services import scraper_offertoday
 
     cfg = TrackConfig.defaults("it")
-    cfg.offertoday_search_terms = ["AI Agent", "人工智能"]
+    cfg.offertoday_search_terms = ["FDE", "程式開發"]
     cfg.max_searches = 4
+    cfg.ai_search_terms = ["agent", "AI"]       # AI 搜尋組（獨立預算）
+    cfg.ai_search_max_searches = 2
 
-    urls = scraper_offertoday._search_urls_for(cfg)
-    assert len(urls) == 3 + 2
+    targets = scraper_offertoday._search_targets(cfg)
+    urls = [u for u, _q, _ai in targets]
+    assert len(urls) == 3 + 2 + 2                # 分類頁 + AI 組 + 其他字詞
     assert urls[0] == scraper_offertoday.SEARCH_URLS[0]
-    assert "AI%20Agent-jobs" in urls[3]      # quote("AI Agent") -> AI%20Agent
-    assert quote("人工智能") in urls[4]       # 中文 -> percent-encoded
+    # AI 組排喺分類頁之後、其他字詞之前（掃描時間唔夠時先犧牲其他字詞）
+    assert [t for t in targets[3:5]] == [
+        (f"https://www.offertoday.com/hk/search/agent-jobs", "agent", True),
+        (f"https://www.offertoday.com/hk/search/AI-jobs", "AI", True),
+    ]
+    assert "FDE-jobs" in urls[5]
+    assert quote("程式開發") in urls[6]
 
-    # 冇 terms -> 淨係分類頁
+    # 冇 terms、冇 AI 組 -> 淨係分類頁
     cfg.offertoday_search_terms = []
+    cfg.ai_search_terms = []
     assert len(scraper_offertoday._search_urls_for(cfg)) == 3
+
+
+def test_ai_search_group_terms_are_not_searched_twice():
+    """AI 組字詞唔會喺「其他字詞」再開一次（唔想同一個字詞行兩次）。"""
+    from app.services import scraper_offertoday
+
+    cfg = TrackConfig.defaults("it")
+    cfg.ai_search_terms = ["agent", "AI"]
+    cfg.ai_search_max_searches = 5
+    cfg.offertoday_search_terms = ["agent", "developer", "AI", "FDE"]
+
+    targets = scraper_offertoday._search_targets(cfg)
+    queries = [q for _u, q, _ai in targets if q != "category"]
+    assert queries.count("agent") == 1
+    assert queries.count("AI") == 1
+    assert "developer" in queries and "FDE" in queries
 
 
 def test_offertoday_general_track_keyword_search(monkeypatch):
@@ -346,7 +372,7 @@ def test_run_scan_fetches_detail_for_all_new_rows(db, monkeypatch):
     async def fake_fetch_detail(session, d):
         fetched.append(d.job_id)
         d.jd_text = f"職責：開發 AI 系統 {d.job_id}"
-        d.posted_at = "2026-08-01"
+        d.posted_at = days_ago(1)
         return d
 
     async def fake_get_browser(platform):
@@ -368,7 +394,7 @@ def test_run_scan_fetches_detail_for_all_new_rows(db, monkeypatch):
     rows = db.query(JobApplication).all()
     assert len(rows) == 3
     assert all(r.jd_text for r in rows)          # every row carries a JD
-    assert all(r.posted_at == "2026-08-01" for r in rows)
+    assert all(r.posted_at == days_ago(1) for r in rows)
 
 
 def test_run_scan_enriches_all_it_rows(db, monkeypatch):
@@ -397,7 +423,7 @@ def test_run_scan_enriches_all_it_rows(db, monkeypatch):
 
     async def fake_fetch_detail(session, d):
         d.jd_text = f"職責：{d.title}"
-        d.posted_at = "2026-08-01"
+        d.posted_at = days_ago(1)
         return d
 
     async def fake_get_browser(platform):
@@ -452,7 +478,7 @@ def test_run_scan_detail_backfill_fills_old_rows(db, monkeypatch):
 
     async def fake_fetch_detail(session, d):
         d.jd_text = "職責：補返 JD"
-        d.posted_at = "2026-08-01"
+        d.posted_at = days_ago(1)
         return d
 
     async def fake_get_browser(platform):

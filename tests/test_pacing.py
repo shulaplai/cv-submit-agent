@@ -4,6 +4,7 @@ The gate guarantees at least N seconds between per-job page opens during a
 scan, even when the fetch tasks run concurrently (semaphore). With a max
 interval the per-call spacing is random uniform [min, max].
 """
+from conftest import days_ago
 import asyncio
 import time
 
@@ -67,7 +68,7 @@ def test_run_scan_paces_detail_fetches(db, monkeypatch):
     async def fake_fetch_detail(session, d):
         stamps.append(time.monotonic())
         d.jd_text = "職責：開發 AI 系統"
-        d.posted_at = "2026-08-01"
+        d.posted_at = days_ago(1)
         return d
 
     async def fake_get_browser(platform):

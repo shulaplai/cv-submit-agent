@@ -42,17 +42,29 @@ def _hit(text: str, keywords: list[str]) -> bool:
     return any(match_keyword(k, text) for k in keywords)
 
 
-def ai_match(title: str, jd_text: str = "", extra_text: str = "") -> bool:
-    """標題或 JD 提到 AI 字眼（標題用設定嘅 AI 職位關鍵字）。"""
+def ai_relevance(title: str, jd_text: str = "", extra_text: str = "") -> str:
+    """AI 相關度："title"（標題有 AI／agent）/ "jd"（只喺 JD 提到）/ ""（唔相關）。
+
+    用戶要求：只要有「AI」或者「agent」就叫做相關（普通 programmer 唔算），
+    而且呢兩類工 scan 到就一定要收（見 classify 嘅優先豁免）。
+    標題級相關度較高，所以職位台可以分開排／篩。
+    """
     from .cv_loader import ai_title_keywords
 
     if not title and not jd_text and not extra_text:
-        return False
+        return ""
     kws = ai_title_keywords()
     if title and any(match_keyword(k, title) for k in kws):
-        return True
+        return "title"
     blob = f"{jd_text or ''} {extra_text or ''}"[:_JD_SCAN_CHARS]
-    return bool(blob.strip()) and any(match_keyword(k, blob) for k in kws)
+    if blob.strip() and any(match_keyword(k, blob) for k in kws):
+        return "jd"
+    return ""
+
+
+def ai_match(title: str, jd_text: str = "", extra_text: str = "") -> bool:
+    """標題或 JD 提到 AI／agent（＝相關）。"""
+    return bool(ai_relevance(title, jd_text, extra_text))
 
 
 def is_contract(title: str, jd_text: str = "") -> bool:
@@ -75,8 +87,10 @@ def compute_flags(row) -> dict:
     title = getattr(row, "title", "") or ""
     company = getattr(row, "company", "") or ""
     jd = getattr(row, "jd_text", "") or ""
+    strength = ai_relevance(title, jd)
     return {
-        "ai_match": ai_match(title, jd),
+        "ai_match": bool(strength),
+        "ai_strength": strength,
         "is_contract": is_contract(title, jd),
         "is_agency": is_agency(title, company, jd),
     }

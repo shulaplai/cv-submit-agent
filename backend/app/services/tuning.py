@@ -32,6 +32,26 @@ class Tuning:
     cap_bypass_min_score: int = 70
     priority_keywords_text: str = ""
     priority_extra_max: int = 50
+    # ---- AI 搜尋組（搵 AI／agent 工）----
+    ai_search_terms_text: str = ""
+    ai_search_max_searches: int = 8
+    ai_search_max_age_days: int = 7
+    ai_stale_action: str = "channel"      # channel | scan
+    # ---- 自動寄 email（SMTP）----
+    send_method: str = "auto"
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from_name: str = ""
+    smtp_from_email: str = ""
+    smtp_use_ssl: bool = False
+    smtp_bcc_self: bool = True
+    # ---- 批量 AI 檢查 ----
+    ai_check_enabled: bool = False
+    ai_check_batch_size: int = 40
+    ai_check_limit: int = 200
+    ai_check_after_scan: bool = False
     # ---- LLM 預算 ----
     max_enrich_per_scan: int = 30
     enrich_all_it: bool = True
@@ -126,6 +146,32 @@ def load_tuning(db=None) -> Tuning:
         if profile is not None else "",
         priority_extra_max=_int(
             profile, "priority_extra_max", settings.PRIORITY_EXTRA_MAX, sentinel=0),
+        ai_search_terms_text=(getattr(profile, "ai_search_terms", "") or "").strip()
+        if profile is not None else "",
+        ai_search_max_searches=_int(
+            profile, "ai_search_max_searches", settings.AI_SEARCH_MAX_SEARCHES,
+            sentinel=0),
+        ai_search_max_age_days=_int(
+            profile, "ai_search_max_age_days", settings.AI_SEARCH_MAX_AGE_DAYS),
+        ai_stale_action=(getattr(profile, "ai_stale_action", "") or "").strip()
+        or settings.AI_STALE_ACTION,
+        send_method=(getattr(profile, "send_method", "") or "").strip()
+        or settings.SEND_METHOD,
+        smtp_host=_text(profile, "smtp_host", settings.SMTP_HOST),
+        smtp_port=_int(profile, "smtp_port", settings.SMTP_PORT, sentinel=0),
+        smtp_user=_text(profile, "smtp_user", settings.SMTP_USER),
+        smtp_password=_text(profile, "smtp_password", settings.SMTP_PASSWORD),
+        smtp_from_name=_text(profile, "smtp_from_name", settings.SMTP_FROM_NAME),
+        smtp_from_email=_text(profile, "smtp_from_email", settings.SMTP_FROM_EMAIL),
+        smtp_use_ssl=_bool(profile, "smtp_use_ssl", settings.SMTP_USE_SSL),
+        smtp_bcc_self=_bool(profile, "smtp_bcc_self", settings.SMTP_BCC_SELF),
+        ai_check_enabled=_bool(profile, "ai_check_enabled", False),
+        ai_check_batch_size=_int(
+            profile, "ai_check_batch_size", settings.AI_CHECK_BATCH_SIZE, sentinel=0),
+        ai_check_limit=_int(
+            profile, "ai_check_limit", settings.AI_CHECK_LIMIT, sentinel=0),
+        ai_check_after_scan=_bool(profile, "ai_check_after_scan",
+                                  settings.AI_CHECK_AFTER_SCAN),
         max_enrich_per_scan=_int(
             profile, "max_enrich_per_scan", settings.MAX_ENRICH_PER_SCAN),
         enrich_all_it=_bool(profile, "enrich_all_it", settings.ENRICH_ALL_IT),
@@ -153,6 +199,29 @@ def load_tuning(db=None) -> Tuning:
     if t.scan_job_delay_max < t.scan_job_delay_min:
         t.scan_job_delay_max = t.scan_job_delay_min
     return t
+
+
+def ai_search_terms(t: Tuning) -> list[str]:
+    """AI 搜尋組字詞：profile（設定頁）-> .env -> 預設 agent, AI。"""
+    from .classify import parse_keywords
+
+    text = (t.ai_search_terms_text or "").strip() or settings.AI_SEARCH_TERMS
+    return parse_keywords(text)
+
+
+def is_ai_search_query(query: str, t: Tuning | None = None) -> bool:
+    """呢個搜尋字詞係唔係「AI 搜尋組」（決定 7 日限制同過期即停）。"""
+    if not query:
+        return False
+    t = t or load_tuning()
+    q = query.strip().lower()
+    for term in ai_search_terms(t):
+        tl = term.strip().lower()
+        if not tl:
+            continue
+        if q == tl or (tl.isascii() and tl in q):
+            return True
+    return False
 
 
 def priority_keywords(t: Tuning) -> list[str]:

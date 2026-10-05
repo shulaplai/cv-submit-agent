@@ -6,6 +6,7 @@
     但唔會叫 LLM 評分、唔生成 CL、唔寫摘要，狀態係 pending_review（照樣顯示）
 開啟 ENRICH_GENERAL_JOBS 之後：一般工照舊入 LLM top-N 預算。
 """
+from conftest import days_ago
 import asyncio
 
 import pytest
@@ -25,7 +26,7 @@ def _harness(monkeypatch, drafts, score_calls: list):
 
     async def fake_fetch_detail(session, d):
         d.jd_text = f"JD for {d.title}"
-        d.posted_at = "2026-08-01"
+        d.posted_at = days_ago(1)
         return d
 
     async def fake_get_browser(platform):

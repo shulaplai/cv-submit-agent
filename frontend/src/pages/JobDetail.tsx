@@ -257,9 +257,13 @@ export function JobDetail({
   };
 
   const isGBA = job.platform === "govhk" || job.platform === "govhk_gbayes";
+  // 政府工一律係 email 申請（就算舊資料標住 form，後端都會當 email flow）
+  const usesEmail = job.apply_method === "email" || job.platform.startsWith("govhk");
   const applyBtnLabel =
-    job.apply_method === "email"
-      ? "✉ Email 申請"
+    usesEmail
+      ? job.contact_email
+        ? "✉ Email 申請"
+        : "✉ 搵返聯絡 email 再申請"
       : job.apply_method === "external_link"
         ? "↗ 外部申請 link"
         : job.platform === "offertoday"
@@ -295,7 +299,23 @@ export function JobDetail({
         <span>match {job.match_score}/100</span>
         {job.posted_at && <span>刊登 {job.posted_at}</span>}
         <span>入庫 {fmtDate(job.created_at)}</span>
-        {job.ai_match && <span className="chip ok" title="AI 相關職位（標題或 JD）">✦ AI</span>}
+        {job.ai_match && (
+          <span
+            className={`chip ${job.ai_strength === "title" ? "ok" : ""}`}
+            title={
+              job.ai_strength === "title"
+                ? "AI 相關：標題有 AI／agent（會用 AI 版 CV＋AI Agent 版自我介紹）"
+                : "只喺 JD 提到 AI／agent（標題冇 → 唔算核心 AI）"
+            }
+          >
+            {job.ai_strength === "title" ? "✦ AI／agent" : "AI（只喺 JD）"}
+          </span>
+        )}
+        {job.source_query && (
+          <span className="chip" title="邊個搜尋字詞／渠道帶入呢份工">
+            來源：{job.source_query === "category" ? "分類頁" : job.source_query}
+          </span>
+        )}
         {job.is_contract && (
           <span className="chip low" title="合約／臨時／兼職／實習">合約／臨時</span>
         )}

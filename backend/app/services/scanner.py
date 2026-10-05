@@ -23,8 +23,9 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..models import CoverLetter, JobApplication, Profile
 from . import scraper_govhk, scraper_jobsdb, scraper_offertoday
-from .classify import (TrackConfig, is_priority_job, known_location_match,
-                       parse_keywords, resolve_general_keywords,
+from .classify import (TrackConfig, blocked_reason, is_priority_job,
+                       known_location_match, parse_keywords,
+                       resolve_blocked_keywords, resolve_general_keywords,
                        resolve_it_keywords, resolve_non_it_keywords,
                        resolve_wanted_locations, wanted_location_match)
 from .cl_generator import generate_cl_checked
@@ -35,7 +36,7 @@ from .llm import LLMError
 from .matcher import keyword_score, score_job
 from .scraper_base import get_browser
 from .store import persist_drafts
-from .tuning import load_tuning, priority_keywords
+from .tuning import ai_search_terms, load_tuning, priority_keywords
 from .jobdate import is_fresh, parse_posted_date
 from . import scan_control
 
@@ -46,7 +47,8 @@ def _platform_scrapers() -> tuple:
     """Enabled scrapers, in scan order. JobsDB is gated by JOBSDB_ENABLED."""
     scrapers: list[tuple] = []
     if settings.GOVHK_ENABLED:
-        scrapers.append(("govhk", scraper_govhk.scrape, None))
+        # 政府工都有詳情頁（jobCard）—— 可以補 JD，亦可以補返聯絡 email
+        scrapers.append(("govhk", scraper_govhk.scrape, scraper_govhk.fetch_detail))
     if settings.JOBSDB_ENABLED:
         scrapers.append(("jobsdb", scraper_jobsdb.scrape, scraper_jobsdb.fetch_detail))
     scrapers.append(("offertoday", scraper_offertoday.scrape, scraper_offertoday.fetch_detail))
@@ -65,6 +67,15 @@ TRACK_GOVHK_CHANNELS = {
 }
 
 _WS_RE = re.compile(r"\s+")
+
+# 掃描期間嘅 AI 搜尋組 context（單一 scan 同時只會行一個，所以用 module-level 就夠）。
+# 用 module state 而唔係 function 參數，係為咗唔改 `_fill_detail()` 嘅簽名 ——
+# 好多測試會 monkeypatch 佢，改簽名會令佢哋全部爆。
+_AI_RUN_CTX: dict = {}
+
+
+def _ai_run_ctx() -> dict:
+    return _AI_RUN_CTX
 
 
 class _PaceGate:
@@ -122,6 +133,14 @@ def load_track_configs(db: Session, only: str | None = None) -> list[TrackConfig
     # 掃描量／高分豁免（Settings 頁 -> .env）
     t = load_tuning(db)
     pr_kws = priority_keywords(t)
+    ai_group = dict(
+        blocked_keywords=resolve_blocked_keywords(
+            getattr(profile, "it_blocked_keywords", "") if profile else ""),
+        ai_search_terms=ai_search_terms(t),
+        ai_search_max_searches=t.ai_search_max_searches,
+        ai_search_max_age_days=t.ai_search_max_age_days,
+        ai_stale_action=t.ai_stale_action,
+    )
     bypass = dict(
         cap_bypass_enabled=t.cap_bypass_enabled,
         cap_bypass_min_score=t.cap_bypass_min_score,
@@ -143,6 +162,7 @@ def load_track_configs(db: Session, only: str | None = None) -> list[TrackConfig
         ),
         max_searches=t.offertoday_it_max_searches,
         **bypass,
+        **ai_group,
     )
     cfg_general = TrackConfig(
         name="general", label="一般",
@@ -161,6 +181,7 @@ def load_track_configs(db: Session, only: str | None = None) -> list[TrackConfig
         ),
         max_searches=t.offertoday_general_max_searches,
         **bypass,
+        **ai_group,
     )
 
     tracks: list[TrackConfig] = []
@@ -183,6 +204,7 @@ class ScanSummary:
     skipped_duplicates: int = 0
     skipped_old: int = 0
     skipped_location: int = 0   # 一般工：寫明另一個地區（唔喺想去名單）-> 篩走
+    skipped_blocked: int = 0    # IT 軌：保險／地產／sales agent 類 -> 篩走
     location_uncertain: int = 0  # 一般工：冇寫地點 -> 保留但標示
     capped: int = 0
     enriched: int = 0
@@ -192,6 +214,10 @@ class ScanSummary:
     # 高分豁免：因為豁免而收多咗幾多份 / 豁免額滿而仍被擋走幾多份
     priority_kept: int = 0
     priority_capped: int = 0
+    # 批量 AI 檢查（掃描後自動跑嘅話）
+    ai_checked: int = 0
+    ai_non_it: int = 0
+    ai_llm_calls: int = 0
     stopped: bool = False
     errors: list[str] = field(default_factory=list)
     # per-track breakdown for the UI: {track: {scanned, new_jobs, skipped_old, capped}}
@@ -213,10 +239,29 @@ class ScanSummary:
             "details_fetched": self.details_fetched,
             "priority_kept": self.priority_kept,
             "priority_capped": self.priority_capped,
+            "skipped_blocked": self.skipped_blocked,
+            "ai_checked": self.ai_checked,
+            "ai_non_it": self.ai_non_it,
+            "ai_llm_calls": self.ai_llm_calls,
             "stopped": self.stopped,
             "errors": list(self.errors),
             "tracks": self.tracks,
         }
+
+
+def _ai_group_max_age(query: str, cfg: TrackConfig, default: int) -> tuple[int, bool]:
+    """(刊登日期上限, 係唔係 AI 搜尋組)。
+
+    AI 搜尋組（agent／AI 字詞搵到嘅工）預設收緊到 7 日（用戶要求）；
+    未開／唔係 AI 組就回傳原本上限（大灣區 7 日、其他 14 日）。
+    """
+    from .tuning import is_ai_search_query
+
+    if not query or not is_ai_search_query(query):
+        return default, False
+    if cfg.ai_search_max_age_days and cfg.ai_search_max_age_days > 0:
+        return cfg.ai_search_max_age_days, True
+    return default, False
 
 
 def _draft_extra_text(d) -> str:
@@ -291,6 +336,27 @@ async def run_scan(db: Session, progress: dict | None = None,
     tuning = load_tuning(db)
     skills = load_skills()
     track_cfgs = list(load_track_configs(db, track))
+    # AI 搜尋組一遇到「過期」就停：呢個 set 記住邊個 platform 已經停（channel 模式）
+    stale_stopped: set[str] = set()
+
+    def _cfg_of(category: str) -> TrackConfig | None:
+        for c in track_cfgs:
+            if c.name == category:
+                return c
+        return track_cfgs[0] if track_cfgs else None
+
+    def _on_ai_stale(platform: str) -> None:
+        """AI 搜尋組撞到過期工：跟設定停該渠道，或者暫停成個掃描。"""
+        action = next((c.ai_stale_action for c in track_cfgs if c.ai_stale_action), "channel")
+        if action == "scan":
+            log.info("AI 搜尋組撞到過期工（%s）-> 暫停成個掃描", platform)
+            scan_control.request_stop()
+        else:
+            log.info("AI 搜尋組撞到過期工（%s）-> 停呢個渠道，繼續其他", platform)
+            stale_stopped.add(platform)
+
+    _AI_RUN_CTX.clear()
+    _AI_RUN_CTX.update({"cfg_of": _cfg_of, "stale_action": _on_ai_stale})
     # 一般 track 嘅「想去嘅地點」白名單（空 = 唔篩）；IT track 唔關事。
     wanted_locations: list[str] = []
     for _c in track_cfgs:
@@ -377,7 +443,19 @@ async def run_scan(db: Session, progress: dict | None = None,
         # MAX_JOB_AGE_DAYS（14日 — 淨係收刊登日期喺附近嘅新工）。
         kept: list = []
         t_skipped_loc = 0
+        t_skipped_blocked = 0
+        blocked_kws = list(tcfg.blocked_keywords or [])
         for d in t_drafts:
+            # 用戶要求：保險／地產／sales agent 類職位「都唔要」—— 絕對否決
+            # （優先於 AI／agent 一定要收嘅規則；呢類唔係你想做嘅工）
+            if blocked_kws and tcfg.name == "it":
+                hit = blocked_reason(getattr(d, "title", ""), blocked_kws)
+                if hit:
+                    t_skipped_blocked += 1
+                    summary.skipped_blocked += 1
+                    log.info("dropping blocked job %s/%s（命中「%s」）",
+                             d.platform, d.job_id, hit)
+                    continue
             max_age = (settings.GBAY_MAX_JOB_AGE_DAYS if d.platform == "govhk_gbayes"
                        else settings.MAX_JOB_AGE_DAYS)
             if max_age > 0 and not is_fresh(d.posted_at, max_age):
@@ -435,6 +513,7 @@ async def run_scan(db: Session, progress: dict | None = None,
             "new_jobs": 0,          # filled after persist
             "skipped_old": t_skipped_old,
             "skipped_location": t_skipped_loc,
+            "skipped_blocked": t_skipped_blocked,
             "capped": t_capped,
         }
 
@@ -510,6 +589,8 @@ async def run_scan(db: Session, progress: dict | None = None,
             async with sem:
                 if scan_control.stop_requested():
                     return          # 用戶撳咗暫停：唔好再開新頁（暫停要即刻有效）
+                if row.platform in stale_stopped:
+                    return          # AI 搜尋組已經撞到過期工 -> 唔再揭呢個渠道
                 for attempt in range(1, attempts + 1):
                     try:
                         if await _fill_detail(db, row, _fetch_detail_for(row.platform), pace=pace):
@@ -560,7 +641,17 @@ async def run_scan(db: Session, progress: dict | None = None,
                         return
 
         if new_rows:
-            await asyncio.gather(*(fill_detail(r) for r in new_rows))
+            # AI 搜尋組逐份揭（唔並行）：咁樣一撞到「過期」就可以即刻停成個渠道，
+            # 唔會出現 6 個 request 同時飛咗出去先發現要停。其他工照舊並行（快）。
+            from .tuning import is_ai_search_query as _is_ai_q
+
+            ai_rows = [r for r in new_rows if _is_ai_q(r.source_query or "", tuning)]
+            other_rows = [r for r in new_rows if r not in ai_rows]
+            await asyncio.gather(*(fill_detail(r) for r in other_rows))
+            for r in ai_rows:
+                await fill_detail(r)
+                if r.platform in stale_stopped or scan_control.stop_requested():
+                    break
             candidates = [r for r in candidates if r.id not in dropped_ids]
             # 一般工（冇 LLM）：JD 已經攞到，做平價整理就入庫，唔洗 API 錢
             for row in cheap_rows:
@@ -596,6 +687,8 @@ async def run_scan(db: Session, progress: dict | None = None,
             async with sem:
                 if scan_control.stop_requested():
                     return          # 用戶撳咗暫停：唔好再洗 LLM 評分／CL
+                if row.platform in stale_stopped:
+                    return          # AI 搜尋組撞到過期 -> 呢個渠道收工（連 JD 都唔再揭）
                 try:
                     set_progress(platform, f"enriching ({kind})", row.title[:40])
                     dropped = await _enrich_one(db, row, platform, fetch_detail, skills, pace=pace)
@@ -624,6 +717,21 @@ async def run_scan(db: Session, progress: dict | None = None,
 
     set_progress("", "done", 0)
     db.commit()
+    _AI_RUN_CTX.clear()
+    # 用戶要求（可選）：掃描後自動跑一次批量 AI 檢查（預設關，唔想偷偷洗錢）
+    if tuning.ai_check_enabled and tuning.ai_check_after_scan and not summary.stopped:
+        try:
+            from .ai_filter import run_ai_check
+
+            res = await run_ai_check(db, limit=tuning.ai_check_limit,
+                                     batch_size=tuning.ai_check_batch_size)
+            summary.ai_checked = res.checked
+            summary.ai_non_it = res.non_it
+            summary.ai_llm_calls = res.batches
+            log.info("auto ai check: 檢查 %s 份（%s 次 LLM），標低匹配 %s 份",
+                     res.checked, res.batches, res.non_it)
+        except Exception as e:  # noqa: BLE001
+            log.warning("auto ai check failed: %s", e)
     return summary
 
 
@@ -651,7 +759,7 @@ async def _fill_detail(db: Session, row: JobApplication, fetch_detail,
     ``prune=False``（補 JD 舊記錄時用）永遠唔會刪行：已申請嘅記錄係你嘅申請
     歷史，其他就只標記為過期（low_match）而唔係刪走。
     """
-    if row.jd_text or fetch_detail is None or row.platform not in ("jobsdb", "offertoday"):
+    if row.jd_text or fetch_detail is None or not can_fetch_detail(row.platform):
         return False
     if pace is not None:
         await pace.wait()
@@ -668,10 +776,25 @@ async def _fill_detail(db: Session, row: JobApplication, fetch_detail,
     if draft.posted_at:
         row.posted_at = draft.posted_at
         row.posted_date = parse_posted_date(draft.posted_at)
-        # 大灣區 7 日（一個星期）；其他渠道 14 日
+        # 大灣區 7 日（一個星期）；其他渠道 14 日；
+        # **AI 搜尋組**（agent／AI 呢啲字詞搵到嘅工）另外收緊到 7 日（用戶要求）。
         max_age = (settings.GBAY_MAX_JOB_AGE_DAYS if row.platform == "govhk_gbayes"
                    else settings.MAX_JOB_AGE_DAYS)
+        # AI 搜尋組（agent／AI 字詞搵到嘅工）收緊到 7 日（用戶要求）；
+        # context 由 run_scan 設定，冇 context（例如測試直接 call）就照原本上限。
+        ctx = _ai_run_ctx()
+        stale_action = ctx.get("stale_action")
+        is_ai_group = False
+        if ctx and getattr(row, "source_query", ""):
+            cfg = ctx["cfg_of"](row.category)
+            if cfg is not None:
+                max_age, is_ai_group = _ai_group_max_age(row.source_query, cfg, max_age)
         if max_age > 0 and not is_fresh(draft.posted_at, max_age):
+            if is_ai_group and stale_action is not None:
+                # 用戶要求：AI 搜尋組一撞到過期就停（停渠道／停掃描）
+                log.info("AI 搜尋組 %s/%s 撞到過期（%s > %s 日）",
+                         row.platform, row.job_id_on_platform, draft.posted_at, max_age)
+                stale_action(row.platform)
             if prune and row.status != "applied":
                 log.info("dropping stale job %s/%s after detail fetch (posted %r, >%sd old)",
                          row.platform, row.job_id_on_platform, draft.posted_at, max_age)
@@ -721,15 +844,30 @@ def _refresh_flags(row) -> None:
     """重算 AI／合約／外派 flag（攞到 JD 之後會更準）。"""
     flags = compute_flags(row)
     row.ai_match = flags["ai_match"]
+    row.ai_strength = flags.get("ai_strength", "")
     row.is_contract = flags["is_contract"]
     row.is_agency = flags["is_agency"]
 
 
 def _fetch_detail_for(platform: str):
+    """邊個 scraper 可以幫呢個 platform 補詳情。
+
+    政府工嘅 platform 係 govhk_it / govhk_gbayes / govhk_general（三個子渠道），
+    但 scraper 只有一個 "govhk"，所以要做 prefix 對應。
+    """
     for p, _, fetch_detail in PLATFORM_SCRAPERS:
         if p == platform:
             return fetch_detail
+    if (platform or "").startswith("govhk"):
+        for p, _, fetch_detail in PLATFORM_SCRAPERS:
+            if p == "govhk":
+                return fetch_detail
     return None
+
+
+def can_fetch_detail(platform: str) -> bool:
+    """呢個 platform 支唔支援補詳情（jobsdb / offertoday / 政府工）。"""
+    return platform in ("jobsdb", "offertoday") or (platform or "").startswith("govhk")
 
 
 def _backfill_candidates(db: Session, limit: int) -> list[JobApplication]:

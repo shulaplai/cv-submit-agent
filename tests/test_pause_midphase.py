@@ -3,6 +3,7 @@
 用戶實測痛點：撳咗「⏸ 暫停」之後，掃描仲繼續開 JD 頁（158 份，每份隔 4–6 秒），
 跟住仲會照跑 LLM 評分／生成 CL。以下測試鎖住呢個行為。
 """
+from conftest import days_ago
 import asyncio
 
 import pytest
@@ -22,7 +23,7 @@ def _harness(monkeypatch, drafts, fetched: list, scored: list, stop_after_fetch:
     async def fake_fetch_detail(session, d):
         fetched.append(d.job_id)
         d.jd_text = f"JD {d.job_id}"
-        d.posted_at = "2026-08-01"
+        d.posted_at = days_ago(1)
         if stop_after_fetch is not None and len(fetched) >= stop_after_fetch:
             scan_control.request_stop()      # 模擬用戶中途撳「⏸ 暫停」
         return d

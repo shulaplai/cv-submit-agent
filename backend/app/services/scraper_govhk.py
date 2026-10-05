@@ -502,8 +502,53 @@ async def _fetch_detail(session: BrowserSession, item: dict, platform: str,
         contact_email=d.get("contact_email", ""),
         contact_person=d.get("contact_person", ""),
         category=category,
+        source_query=platform,
         raw={"apply_note": d.get("apply_note", "")},
     )
+
+
+def can_fetch_detail(platform: str) -> bool:
+    """政府工有冇得補詳情（jd_text 以外，最重要係補返聯絡 email）。"""
+    return (platform or "").startswith("govhk")
+
+
+async def fetch_detail(session: BrowserSession, draft: JobDraft) -> JobDraft:
+    """補／更新政府工嘅詳情：JD、聯絡 email／聯絡人、刊登日期、公司、地點。
+
+    點解需要：`store._apply_method_for()` 見到 draft 冇 contact_email 就會標
+    `apply_method="form"`，令投遞時跌入「唔支援嘅平台」。但其實政府工嘅申請方法
+    （Email／電話／親身）係寫喺詳情頁嘅「申請須知」裡面，只要重新揭一次詳情頁就
+    搵得返。呢個 function 就係俾「🔄 更新 JD」同投遞前嘅自動修復用。
+    """
+    item = {
+        "job_id": draft.job_id,
+        "title": draft.title,
+        "detail_url": draft.url,
+        "location": draft.location,
+        "salary_range": draft.salary_range,
+    }
+    d = await _fetch_detail(session, item, draft.platform or IT_PLATFORM,
+                            draft.category or "")
+    if d.jd_text:
+        draft.jd_text = d.jd_text
+    if d.contact_email:
+        draft.contact_email = d.contact_email
+    if d.contact_person:
+        draft.contact_person = d.contact_person
+    if d.company:
+        draft.company = d.company
+    if d.location:
+        draft.location = d.location
+    if d.salary_range:
+        draft.salary_range = d.salary_range
+    if d.posted_at:
+        draft.posted_at = d.posted_at
+    if d.url:
+        draft.url = d.url
+    if d.contact_email:
+        # 有 email 就一定係 email 申請（本來可能因為冇 email 被標成 form）
+        draft.apply_method = "email"
+    return draft
 
 
 async def run_once() -> list[JobDraft]:

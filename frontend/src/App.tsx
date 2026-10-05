@@ -200,6 +200,18 @@ export default function App() {
                     上限已滿，另有 {scan.last.capped} 份等下次 scan
                   </>
                 )}
+                {(scan.last.skipped_blocked ?? 0) > 0 && (
+                  <>
+                    <br />
+                    🚫 保險／地產類已篩走 {scan.last.skipped_blocked} 份
+                  </>
+                )}
+                {(scan.last.ai_non_it ?? 0) > 0 && (
+                  <>
+                    <br />
+                    🤖 AI 檢查判非 IT {scan.last.ai_non_it} 份（{scan.last.ai_llm_calls} 次 LLM）
+                  </>
+                )}
                 {(scan.last.priority_kept ?? 0) > 0 && (
                   <>
                     <br />

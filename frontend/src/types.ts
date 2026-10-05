@@ -39,6 +39,13 @@ export interface Job {
   job_summary: string;
   // fit 標籤（職位台篩選 chip）
   ai_match: boolean;
+  // AI 相關度："" | "title"（標題有 AI／agent）| "jd"（只喺 JD 提到）
+  ai_strength: string;
+  // 邊個搜尋字詞／渠道帶入呢份工
+  source_query: string;
+  // 批量 AI 檢查結果
+  ai_verdict: "" | "it_ai" | "it" | "non_it";
+  ai_verdict_reason: string;
   is_contract: boolean;
   is_agency: boolean;
   match_level: "" | "under" | "fit" | "over";
@@ -93,6 +100,10 @@ export interface ScanStatus {
     details_fetched: number;
     priority_kept?: number;
     priority_capped?: number;
+    skipped_blocked?: number;
+    ai_checked?: number;
+    ai_non_it?: number;
+    ai_llm_calls?: number;
     stopped: boolean;
     errors: string[];
     track: string;
@@ -200,6 +211,28 @@ export interface Profile {
   enrich_all_it: boolean;
   max_enrich_it_per_scan: number;
   enrich_general_jobs: boolean;
+  // AI 搜尋組
+  ai_search_terms: string;
+  ai_search_max_searches: number;
+  ai_search_max_age_days: number;
+  ai_stale_action: string;
+  // 批量 AI 檢查設定
+  ai_check_enabled: boolean;
+  ai_check_batch_size: number;
+  ai_check_limit: number;
+  ai_check_after_scan: boolean;
+  // 保險／地產封鎖字眼（留空 = 內建）
+  it_blocked_keywords: string;
+  // SMTP 自動寄信
+  send_method: string;
+  smtp_host: string;
+  smtp_port: number;
+  smtp_user: string;
+  smtp_password: string;
+  smtp_from_name: string;
+  smtp_from_email: string;
+  smtp_use_ssl: boolean;
+  smtp_bcc_self: boolean;
   // 掃描節奏
   scan_job_delay_min_seconds: number;
   scan_job_delay_max_seconds: number;

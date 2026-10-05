@@ -105,11 +105,52 @@ def test_fetch_detail_endpoint_offertoday(client, db, monkeypatch):
     assert "JD" in body["message"]
 
 
-def test_fetch_detail_endpoint_govhk_is_noop(client, db):
+def test_fetch_detail_endpoint_govhk_refetches(client, db, monkeypatch):
+    """政府工都有詳情頁（jobCard）：而家「🔄 更新 JD」會真係去揭頁。
+
+    以前會回「政府工冇獨立詳情頁要補」——但舊資料有 330 份因為揭唔到聯絡 email
+    而被標成 form，投遞時跌入「唔支援嘅平台: govhk_gbayes」。而家要能夠補返。
+    """
     from app.models import JobApplication
+    from app.routers import jobs as jobs_router
 
     row = JobApplication(platform="govhk_it", job_id_on_platform="31-26-0009999",
-                         title="資訊科技技術員", category="it", status="pending_review")
+                         title="資訊科技技術員", category="it", status="pending_review",
+                         url="https://www2.jobs.gov.hk/0/tc/jobCard/?order=X",
+                         apply_method="form", contact_email="")
+    db.add(row)
+    db.commit()
+
+    async def fake_browser(platform):
+        return object()
+
+    async def fake_fetch_detail(session, draft):
+        draft.contact_email = "hr@govhk.example"
+        draft.jd_text = "職責：支援電腦系統"
+        return draft
+
+    monkeypatch.setattr(jobs_router, "_detail_fetcher", lambda p: fake_fetch_detail)
+    monkeypatch.setattr(jobs_router, "get_browser", fake_browser)
+
+    r = client.post(f"/api/jobs/{row.id}/fetch-detail")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True and body["updated"] is True
+    assert "聯絡 email" in body["message"]
+
+    db.expire_all()
+    fresh = db.get(JobApplication, row.id)
+    assert fresh.contact_email == "hr@govhk.example"
+    assert fresh.apply_method == "email"          # 由 form 修返做 email
+    assert fresh.jd_text == "職責：支援電腦系統"
+
+
+def test_fetch_detail_endpoint_unknown_platform(client, db):
+    """真係冇詳情頁嘅平台才回「冇得補」。"""
+    from app.models import JobApplication
+
+    row = JobApplication(platform="weirdboard", job_id_on_platform="zz1",
+                         title="X", category="it", status="pending_review")
     db.add(row)
     db.commit()
 
@@ -117,7 +158,7 @@ def test_fetch_detail_endpoint_govhk_is_noop(client, db):
     assert r.status_code == 200
     body = r.json()
     assert body["ok"] is False and body["updated"] is False
-    assert "掃描時已經入庫" in body["message"]
+    assert "冇詳情頁" in body["message"]
 
 
 def test_fetch_detail_endpoint_404(client):

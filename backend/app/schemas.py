@@ -41,6 +41,13 @@ class JobApplicationOut(BaseModel):
     is_contract: bool = False
     is_agency: bool = False
     match_level: str = ""          # "" | under | fit | over
+    # AI 相關度："" | "title"（標題有 AI／agent）| "jd"（只喺 JD 提到）
+    ai_strength: str = ""
+    # 邊個搜尋字詞／渠道帶入呢份工（睇 AI 搜尋組成效）
+    source_query: str = ""
+    # 批量 AI 檢查結果
+    ai_verdict: str = ""
+    ai_verdict_reason: str = ""
     # 申請時會交邊份 CV（AI 版／Full-stack 版／Developer 版／通用版）
     cv_variant: str = ""
     apply_method: str
@@ -126,6 +133,7 @@ class ProfileIn(BaseModel):
     general_track_enabled: Optional[bool] = None
     general_job_keywords: Optional[str] = None
     non_it_keywords: Optional[str] = None
+    it_blocked_keywords: Optional[str] = None
     general_wanted_locations: Optional[str] = None
     offertoday_cv_ai_keyword: Optional[str] = None
     offertoday_cv_it_keyword: Optional[str] = None
@@ -151,6 +159,26 @@ class ProfileIn(BaseModel):
     enrich_all_it: Optional[bool] = None
     max_enrich_it_per_scan: Optional[int] = None
     enrich_general_jobs: Optional[bool] = None
+    # ---- AI 搜尋組 ----
+    ai_search_terms: Optional[str] = None
+    ai_search_max_searches: Optional[int] = None
+    ai_search_max_age_days: Optional[int] = None
+    ai_stale_action: Optional[str] = None
+    # ---- 批量 AI 檢查 ----
+    # ---- SMTP 自動寄信 ----
+    send_method: Optional[str] = None
+    smtp_host: Optional[str] = None
+    smtp_port: Optional[int] = None
+    smtp_user: Optional[str] = None
+    smtp_password: Optional[str] = None
+    smtp_from_name: Optional[str] = None
+    smtp_from_email: Optional[str] = None
+    smtp_use_ssl: Optional[bool] = None
+    smtp_bcc_self: Optional[bool] = None
+    ai_check_enabled: Optional[bool] = None
+    ai_check_batch_size: Optional[int] = None
+    ai_check_limit: Optional[int] = None
+    ai_check_after_scan: Optional[bool] = None
     # ---- 掃描節奏 ----
     scan_job_delay_min_seconds: Optional[float] = None
     scan_job_delay_max_seconds: Optional[float] = None
@@ -203,6 +231,7 @@ class ProfileOut(BaseModel):
     general_track_enabled: bool
     general_job_keywords: str
     non_it_keywords: str
+    it_blocked_keywords: str = ""
     general_wanted_locations: str
     offertoday_cv_ai_keyword: str
     offertoday_cv_it_keyword: str
@@ -228,6 +257,25 @@ class ProfileOut(BaseModel):
     enrich_all_it: bool = True
     max_enrich_it_per_scan: int = -1
     enrich_general_jobs: bool = False
+    # ---- AI 搜尋組 ----
+    ai_search_terms: str = ""
+    ai_search_max_searches: int = 0
+    ai_search_max_age_days: int = -1
+    ai_stale_action: str = ""
+    # ---- 批量 AI 檢查 ----
+    send_method: str = ""
+    smtp_host: str = ""
+    smtp_port: int = 0
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from_name: str = ""
+    smtp_from_email: str = ""
+    smtp_use_ssl: bool = False
+    smtp_bcc_self: bool = True
+    ai_check_enabled: bool = False
+    ai_check_batch_size: int = 0
+    ai_check_limit: int = 0
+    ai_check_after_scan: bool = False
     # ---- 掃描節奏 ----
     scan_job_delay_min_seconds: float = 0.0
     scan_job_delay_max_seconds: float = 0.0
