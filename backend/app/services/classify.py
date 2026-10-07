@@ -26,7 +26,15 @@ from ..config import settings
 # Union of the keyword sets previously duplicated across the scrapers and
 # apply_bot. A title matching any of these is an IT / tech job.
 DEFAULT_IT_KEYWORDS = [
-    "ai", "agent", "developer", "programmer", "programming", "software",
+    # 注意：呢度**唔可以**放裸 "agent"。用戶實測：一放就會將 Hotline Agent／
+    # Property Agent／reservations agent／報關 agent 全部當成 IT 工收（112 份），
+    # 因為「agent」在香港招聘市場大多數指「客服／代理／經紀」而唔係 AI agent。
+    # 真 AI agent 職位標題一定仲有 AI／開發／工程師／algorithm 等字（照樣命中）。
+    "ai", "agentic", "agent developer", "ai agent", "agent builder",
+    "agent engineer", "agent architect",
+    "developer", "programmer", "programming", "software",
+    "solution architect", "software architect", "system architect",
+    "data architect", "cloud architect", "架構師", "架构师",
     "engineer", "engineering", "frontend", "backend", "full stack", "full-stack",
     "python", "javascript", "typescript", "java", "node", "react", "sql",
     "database", "devops", "cloud", "llm", "machine learning", "deep learning",
@@ -38,6 +46,11 @@ DEFAULT_IT_KEYWORDS = [
     "模型", "機器學習", "深度學習", "網絡", "網路", "網絡安全", "雲端", "雲",
     "全棧", "計算機", "計算機科學", "編程", "演算法", "編碼", "科技", "開發",
     "測試", "技術支援", "桌面", "維護",
+    # 簡體字版本：OfferToday 好多大陸公司／外包用簡體出標題
+    # （例：「创始工程师（agent）」、「数据开发」），唔加就會漏咗一批 IT 工。
+    "工程师", "软件", "系统", "技术员", "数据", "数据分析", "机器学习",
+    "深度学习", "网络", "网络安全", "云端", "云", "全栈", "计算机",
+    "计算机科学", "编程", "算法", "编码", "开发", "测试", "技术支持", "维护",
 ]
 
 # 「唔似 IT」嘅職位字眼：標題有呢啲就唔會入 IT 軌（除非同時有強 IT 字眼）。
@@ -62,6 +75,9 @@ STRONG_IT_KEYWORDS = [
     "cyber", "it ", "it support", "資訊", "程式", "編程", "軟件", "軟體", "系統",
     "網絡", "網路", "雲端", "數據", "人工智能", "機器學習", "全棧", "前端", "後端",
     "演算法", "計算機",
+    # 簡體字版本（同上：大陸公司標題）
+    "工程师", "软件", "系统", "网络", "云端", "数据", "机器学习", "全栈",
+    "算法", "计算机", "编程", "开发",
 ]
 
 

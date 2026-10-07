@@ -502,19 +502,27 @@ def test_govhk_it_caps_at_50(monkeypatch):
     monkeypatch.setattr(settings, "GOVHK_IT_MAX_JOBS", 5)
     fixture = (Path(__file__).parent / "fixtures" / "govhk_joblist_it.html").read_text(encoding="utf-8")
 
+    TOKEN_HTML = '<form><input name="__RequestVerificationToken" value="tok-test" /></form>'
+
     class FakeResp:
+        def __init__(self, text, url=""):
+            self._text = text
+            self.url = url
+
         async def text(self):
-            return fixture
+            return self._text
 
         async def dispose(self):
             pass
 
     class FakeRequest:
-        async def post(self, *a, **k):
-            return FakeResp()
+        async def post(self, url, *a, **k):
+            return FakeResp(TOKEN_HTML, str(url))
 
-        async def get(self, *a, **k):
-            return FakeResp()
+        async def get(self, url, *a, **k):
+            # 攞 token 嘅 GET（冇 page=）回 joblist 頁；揭頁回列表
+            text = TOKEN_HTML if "page=" not in str(url) else fixture
+            return FakeResp(text, str(url))
 
     class FakeSession:
         context = type("Ctx", (), {"request": FakeRequest()})()
@@ -526,6 +534,12 @@ def test_govhk_it_caps_at_50(monkeypatch):
     async def fake_human_delay(*a, **k):
         pass
 
+    real_parse = scraper_govhk.parse_joblist_html
+    # 列表列嘅日期改成「新鮮」，測試唔應該受 fixture 嘅硬編碼日期影響
+    monkeypatch.setattr(
+        scraper_govhk, "parse_joblist_html",
+        lambda html: [{**it, "posted_at": days_ago_dmy(1)} for it in real_parse(html)],
+    )
     monkeypatch.setattr(scraper_govhk, "_fetch_detail", fake_fetch_detail)
     monkeypatch.setattr(scraper_govhk, "human_delay", fake_human_delay)
 

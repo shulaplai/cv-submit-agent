@@ -254,10 +254,16 @@ def _ai_group_max_age(query: str, cfg: TrackConfig, default: int) -> tuple[int, 
 
     AI 搜尋組（agent／AI 字詞搵到嘅工）預設收緊到 7 日（用戶要求）；
     未開／唔係 AI 組就回傳原本上限（大灣區 7 日、其他 14 日）。
-    """
-    from .tuning import is_ai_search_query
 
-    if not query or not is_ai_search_query(query):
+    判斷用**渠道自己嘅字詞清單**（cfg.ai_search_terms），唔用全域設定 ——
+    否則測試／自訂渠道嘅 AI 字詞會被忽略。
+    """
+    from .tuning import is_ai_search_query, matches_ai_term
+
+    if not query:
+        return default, False
+    if not (matches_ai_term(query, cfg.ai_search_terms or [])
+            or is_ai_search_query(query)):
         return default, False
     if cfg.ai_search_max_age_days and cfg.ai_search_max_age_days > 0:
         return cfg.ai_search_max_age_days, True

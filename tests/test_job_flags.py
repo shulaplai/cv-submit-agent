@@ -4,10 +4,18 @@ from app.services.jobflags import ai_match, compute_flags, is_agency, is_contrac
 
 
 def test_ai_match_from_title():
-    """用戶要求：只認「AI」同「agent」兩個字眼（設定頁可加）。"""
+    """用戶要求：只認「AI」同「agent」兩個字眼（設定頁可加）。
+
+    「agent」係弱字：香港招聘市場大部分 agent 職位係客服／代理／經紀，
+    所以要有技術語境先算 AI（否則 112 份 Hotline Agent／Property Agent 會入 IT 軌）。
+    """
     assert ai_match("AI Engineer") is True
     assert ai_match("Agent Developer") is True
-    assert ai_match("保險 Agent 轉行") is True     # 有 agent 就收（用戶要求：一定要收）
+    assert ai_match("AI Agent 開發工程師") is True
+    assert ai_match("agent架构师") is True
+    assert ai_match("保險 Agent 轉行") is False     # 冇技術語境 -> 唔係 AI 工
+    assert ai_match("Hotline Agent") is False
+    assert ai_match("Property Agent") is False
     assert ai_match("Web Developer") is False
     assert ai_match("Python Programmer") is False
     assert ai_match("大模型應用開發") is False      # 已經唔喺 AI 字眼清單

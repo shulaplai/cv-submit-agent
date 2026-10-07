@@ -209,14 +209,13 @@ def ai_search_terms(t: Tuning) -> list[str]:
     return parse_keywords(text)
 
 
-def is_ai_search_query(query: str, t: Tuning | None = None) -> bool:
-    """呢個搜尋字詞係唔係「AI 搜尋組」（決定 7 日限制同過期即停）。"""
-    if not query:
+def matches_ai_term(query: str, terms: list[str]) -> bool:
+    """query 係唔係命中畀定嘅 AI 搜索字詞（拉丁字用包含比對，中文用相等）。"""
+    q = (query or "").strip().lower()
+    if not q:
         return False
-    t = t or load_tuning()
-    q = query.strip().lower()
-    for term in ai_search_terms(t):
-        tl = term.strip().lower()
+    for term in terms or []:
+        tl = (term or "").strip().lower()
         if not tl:
             continue
         if q == tl or (tl.isascii() and tl in q):
@@ -224,17 +223,24 @@ def is_ai_search_query(query: str, t: Tuning | None = None) -> bool:
     return False
 
 
+def is_ai_search_query(query: str, t: Tuning | None = None) -> bool:
+    """呢個搜尋字詞係唔係「AI 搜尋組」（決定 7 日限制同過期即停）。"""
+    return matches_ai_term(query, ai_search_terms(t or load_tuning()))
+
+
 def priority_keywords(t: Tuning) -> list[str]:
     """有效「優先（豁免上限）字詞」：profile 設定 -> AI 職位關鍵字。
 
     用戶設定嘅字詞係額外加嘅；AI 字眼永遠有效（用戶要求：高分／AI 工唔受上限）。
+    但**弱 AI 字（agent）唔可以**做豁免字：佢會令 Hotline Agent／Property Agent
+    呢類非 IT 工無視渠道上限照收（實測 112 份噪音）。
     """
     from .classify import parse_keywords
-    from .cv_loader import ai_title_keywords
+    from .jobflags import strong_ai_title_keywords
 
     merged: list[str] = []
     seen: set[str] = set()
-    for kw in parse_keywords(t.priority_keywords_text) + ai_title_keywords():
+    for kw in parse_keywords(t.priority_keywords_text) + strong_ai_title_keywords():
         low = kw.lower()
         if low and low not in seen:
             seen.add(low)

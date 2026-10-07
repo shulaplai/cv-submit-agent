@@ -39,7 +39,9 @@ class Settings(BaseSettings):
     # 拉丁字用詞邊界比對，所以 "ai" 唔會誤中 "email"/"detail"。
     # 用戶要求（2026-10）：AI 相關只認「AI」同「agent」兩個字眼
     # （大模型／機器學習呢啲唔需要）——亦可以喺設定頁改。
-    CV_AI_TITLE_KEYWORDS: str = "ai,agent"
+    # 「agent」係**弱字**：要有技術語境先算 AI（見 jobflags._WEAK_AI_KEYWORDS），
+    # 否則 Hotline Agent／Property Agent 會全部當成 AI 工。
+    CV_AI_TITLE_KEYWORDS: str = "ai,agentic,agent"
 
     # --- Job targeting ---
     JOB_KEYWORDS: str = "AI Engineer,agent developer,AI developer,developer,programmer,frontend developer,資訊科技工程師,AI 工程師,AI基礎架構"
@@ -110,13 +112,19 @@ class Settings(BaseSettings):
     )
     # Max number of those extra IT keyword searches per scan.
     OFFERTODAY_IT_MAX_SEARCHES: int = 10
+    # OfferToday: 直接打 JSON API（search/list）嚟攞列表連日期，而唔係 scroll 頁面。
+    # 預設 False：API rate limit 好惡（連續打會 HTTP 429，退避重試都可能用盡），
+    # 而且 DOM 路徑已經會**攔截**頁面自己嘅 search/list 回應，一樣有日期。
+    OFFERTODAY_API_ENABLED: bool = False
     # ------------------------------------------------------------------
     # AI 搜尋組（用戶要求）：用高精度字詞專門搵 AI／agent 工，並幫佢哋設
     # 7 日嘅刊登日期上限；一遇到過期就停嗰個字詞／渠道（可設定為停成個 scan）。
     # 呢組嘅工「一定要收」——標題命中就會無視渠道／track 上限（高分豁免）。
     # ------------------------------------------------------------------
     # AI 搜尋字詞（每個字詞 = OfferToday 一個 <term>-jobs 搜尋頁）
-    AI_SEARCH_TERMS: str = "agent,AI"
+    # 注意：唔可以用裸 "agent" —— 平台會回傳大量 Hotline Agent／Property Agent／
+    # 報關 agent（實測 112 份噪音）。用複合字詞就只會搵到真正 AI agent 工。
+    AI_SEARCH_TERMS: str = "AI Agent,AI,agentic"
     # AI 組每次掃描最多開幾多個搜尋頁
     AI_SEARCH_MAX_SEARCHES: int = 8
     # AI 組嘅工必須喺幾日內刊登（0 = 唔限）

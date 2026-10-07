@@ -7,13 +7,18 @@
        KEEPS ALL vacancies (IT + 一般, each tagged by its title classification);
        posting-date window is 1 week (GBAY_MAX_JOB_AGE_DAYS).
     2. 資訊及科技界 — the 「電腦及資訊科技」 vacancy category
-       (Criteria.jobType=5). The search is a POST to /jobsearch/simple/ that
+       (Criteria.jobType=5). The search is a POST to /jobsearch/search/ that
        stashes the criteria in a session cookie and 302s to
-       /jobsearch/joblist/?direct=False; subsequent pages are plain GETs.
+       /jobsearch/quickview/?direct=False; subsequent joblist pages are plain
+       GETs. **The POST needs the antiforgery token from the joblist page**:
+       without it gov.hk 302s to /404.html, the criteria never enter the
+       session, and the joblist returns *every* vacancy (no filtering at all).
 
-  一般 track (``govhk_general``): the main quickview (ALL vacancy categories,
-  newest-first) filtered by the user's general keywords and excluding any
-  IT-classified titles.
+  一般 track (``govhk_general``): gov.hk's own search box — one search per
+  general keyword (Criteria.searchField), pages of joblist/?direct=False,
+  filtered by the same general keywords and excluding IT-classified titles.
+  Falls back to the main quickview (ALL vacancy categories, newest-first)
+  when the search form is unavailable.
 
 Application method for all three is EMAIL (contact address lives inside
 申請須知), so drafts carry apply_method="email" + contact_email.
@@ -42,20 +47,30 @@ GENERAL_PLATFORM = "govhk_general"  # 一般職位 quickview（一般 track）
 
 GBY_LIST_URL = f"{BASE}/0/tc/jobseeker/jobsearch/quickview/gbayes/"
 QUICKVIEW_URL = f"{BASE}/0/tc/jobseeker/jobsearch/quickview/?direct=False"
-SIMPLE_URL = f"{BASE}/0/tc/jobseeker/jobsearch/simple/"
 JOBLIST_URL = f"{BASE}/0/tc/jobseeker/jobsearch/joblist/"
+# 搜尋表單一定要 POST 去 /search/ 先會生效（實測 2026-10）。
+# 舊嘅 /simple/ 已經 404：POST 去嗰邊會 302 去 /404.html，條件入唔到 session，
+# 之後揭 joblist 只會回「全部空缺」，即係完全冇 filter。
+SEARCH_POST_URL = f"{BASE}/0/tc/jobseeker/jobsearch/search/"
 IT_JOB_TYPE = "5"               # 「電腦及資訊科技」空缺類別
 MAX_PAGES = 30
+# 一次掃描最多用幾多個一般關鍵字搜尋（每個搜尋 = 1 次 POST + 若干頁 GET）。
+KEYWORD_SEARCH_MAX = 12
 
 # A vacancy number looks like 21-26-0008159
 JOB_ID_RE = re.compile(r"\d{2}-\d{2}-\d{7}")
 EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+")
+# 表單 POST 必須帶嘅 antiforgery token（喺 joblist 頁嘅 <form> 裡面）
+TOKEN_RE = re.compile(r'name="__RequestVerificationToken"[^>]*value="([^"]+)"')
 
-# Exact form payload the browser sends when the user picks 「電腦及資訊科技」
-# and clicks 搜尋 (captured live). IsMobile=true + Search=搜尋 are required.
-IT_SEARCH_FORM = {
+# 搜尋表單骨架（實測自 gov.hk joblist 頁嘅 <form>）。__RequestVerificationToken
+# 每次由 joblist 頁新鮮攞；Criteria.jobType=5 揀「電腦及資訊科技」類別；
+# Criteria.searchField = 關鍵字（一般軌用）；兩者喺 /search/ 都實測有效。
+SEARCH_FORM = {
     "Criteria.filterId": "",
-    "Criteria.jobType": IT_JOB_TYPE,
+    "Criteria.jobType": "",
+    "Criteria.selectedJobTitle": "",
+    "Criteria.selectedDistricts": "",
     "Criteria.displayMoreVac": "false",
     "Criteria.industry": "",
     "Criteria.salaryFr": "",
@@ -65,7 +80,7 @@ IT_SEARCH_FORM = {
     "Criteria.specEmpProgram": "",
     "SearchFor": "",
     "RefineSearch": "True",
-    "IsMobile": "true",
+    "IsMobile": "False",
     "isMobile": "false",
     "Search": "搜尋",
 }
@@ -113,8 +128,10 @@ def parse_joblist_html(html: str) -> list[dict]:
     """Parse a joblist search-result page (table) into raw item dicts.
 
     The joblist page is a <table> (one <tr> per vacancy) rendered after the
-    POST search. Titles/links/salary/location live in sibling <span>s.
-    Returns [{job_id, title, salary_range, location, detail_url}].
+    POST search. Titles/links/salary/location live in sibling <span>s, and the
+    刊登日期 column means the posting date is known WITHOUT opening the detail
+    page (so stale vacancies can be skipped before the extra request).
+    Returns [{job_id, title, salary_range, location, posted_at, detail_url}].
     """
     soup = BeautifulSoup(html, "html.parser")
     items = []
@@ -147,6 +164,8 @@ def parse_joblist_html(html: str) -> list[dict]:
             "title": title,
             "salary_range": cell("job_icon2"),
             "location": cell("fill_but3"),
+            # 刊登日期欄（DD/MM/YYYY）—— 唔開詳情頁都知幾時登
+            "posted_at": cell("job_icon1"),
             "detail_url": detail_url,
         })
     return items
@@ -335,11 +354,98 @@ def _room_for(title: str, skills, normal: int, priority: int, cfg: TrackConfig) 
     return room_normal, prio
 
 
+class _Tally:
+    """一個渠道嘅收工計數（軟上限／優先豁免／收手判斷）。
+
+    ``take()`` 回 ``"normal"``／``"priority"`` = 收（caller 應該開詳情頁）；
+    ``"skip"`` = 唔收（軟上限已滿又唔係優先工 —— 唔好白開詳情頁）；
+    ``"stop"`` = 連續 PRIORITY_SCAN_SLACK 份都冇 room，收手唔好再揭頁。
+    """
+
+    __slots__ = ("normal", "priority", "misses")
+
+    def __init__(self) -> None:
+        self.normal = 0
+        self.priority = 0
+        self.misses = 0
+
+    @property
+    def total(self) -> int:
+        return self.normal + self.priority
+
+    def take(self, title: str, skills, cfg: TrackConfig) -> str:
+        room_normal, room_priority = _room_for(title, skills, self.normal, self.priority, cfg)
+        if not room_normal and not room_priority:
+            self.misses += 1
+            if _cap_budget(cfg)[0] > 0 and self.misses >= PRIORITY_SCAN_SLACK:
+                return "stop"
+            return "skip"
+        self.misses = 0
+        if room_normal:
+            self.normal += 1
+            return "normal"
+        self.priority += 1      # 高分豁免：照收
+        return "priority"
+
+
+async def _fetch_token(session: BrowserSession) -> str:
+    """由 gov.hk joblist 頁攞表單嘅 antiforgery token。
+
+    冇 token 嘅話搜尋 POST 會 302 去 /404.html，條件入唔到 session，之後嘅
+    joblist 只會回「全部空缺」—— 即係靜靜地變成冇 filter。
+    """
+    request = getattr(getattr(session, "context", None), "request", None)
+    if request is None:
+        return ""
+    try:
+        resp = await request.get(f"{JOBLIST_URL}?direct=False")
+        page_html = await resp.text()
+        await resp.dispose()
+    except Exception as e:  # noqa: BLE001
+        log.warning("govhk search: 攞唔到表單 token: %s", e)
+        return ""
+    m = TOKEN_RE.search(page_html or "")
+    if not m:
+        log.warning("govhk search: joblist 頁搵唔到 antiforgery token")
+        return ""
+    return m.group(1)
+
+
+async def _post_search(session: BrowserSession, token: str, keyword: str = "",
+                       job_type: str = "") -> bool:
+    """把搜尋條件放入 gov.hk session；之後 GET joblist 就係搜尋結果。
+
+    ``keyword`` = Criteria.searchField（一般軌逐個關鍵字用）；
+    ``job_type`` = Criteria.jobType（``IT_JOB_TYPE`` = 電腦及資訊科技）。
+    回 False = 條件入唔到 session（caller 唔應該當成「冇結果」）。
+    """
+    request = getattr(getattr(session, "context", None), "request", None)
+    if request is None or not token:
+        return False
+    form = dict(SEARCH_FORM)
+    form["Criteria.jobType"] = job_type
+    form["Criteria.searchField"] = keyword
+    form["__RequestVerificationToken"] = token
+    try:
+        resp = await request.post(SEARCH_POST_URL, form=form)
+        url = getattr(resp, "url", "") or ""
+        await resp.dispose()
+    except Exception as e:  # noqa: BLE001
+        log.warning("govhk search %r failed: %s", keyword or job_type, e)
+        return False
+    if "404.html" in url:
+        log.warning("govhk search %r: 俾網站拒絕（302 -> 404）", keyword or job_type)
+        return False
+    return True
+
+
 async def _scrape_it(session: BrowserSession, seen: set[str],
                      cfg: TrackConfig | None = None) -> list[JobDraft]:
-    """資訊及科技界 joblist (POST search + session GET pages), capped per scan.
+    """資訊及科技界 joblist（POST 搜尋 + joblist 分頁）, capped per scan.
 
-    The category itself already restricts to IT/tech, so no extra title filter.
+    搜尋用 ``Criteria.jobType=5``（電腦及資訊科技）—— 呢個類別已經 restrict 咗
+    IT／tech，所以唔使再加標題 filter。**注意**：一定要用 `/search/` 端點 +
+    joblist 頁嘅 antiforgery token，否則條件入唔到 session，joblist 會回全部空缺。
     用戶要求：評級好高嘅工（標題命中優先字詞／pre-score 夠高）無視渠道上限 ——
     軟上限只計非優先工，優先工另有豁免額（cfg.priority_extra_max）。
     軟上限用盡之後唔會再開詳情頁，只會繼續揭頁搵優先工（連續 PRIORITY_SCAN_SLACK
@@ -350,13 +456,11 @@ async def _scrape_it(session: BrowserSession, seen: set[str],
     cfg = cfg or TrackConfig.defaults("it")
     skills = load_skills()
     drafts: list[JobDraft] = []
-    normal = priority = misses = 0
+    tally = _Tally()
 
-    try:
-        resp = await session.context.request.post(SIMPLE_URL, form=IT_SEARCH_FORM)
-        await resp.dispose()
-    except Exception as e:  # noqa: BLE001
-        log.warning("govhk IT search POST failed: %s", e)
+    token = await _fetch_token(session)
+    if not token or not await _post_search(session, token, job_type=IT_JOB_TYPE):
+        log.warning("govhk IT: 搜尋條件入唔到 session — 跳過呢個渠道")
         return drafts
 
     for page_no in range(1, MAX_PAGES + 1):
@@ -377,22 +481,21 @@ async def _scrape_it(session: BrowserSession, seen: set[str],
         matches = [it for it in items if it["job_id"] and it["job_id"] not in seen]
         for it in matches:
             seen.add(it["job_id"])
-            room_normal, room_priority = _room_for(it["title"], skills, normal, priority, cfg)
-            if not room_normal and not room_priority:
-                misses += 1
-                if _cap_budget(cfg)[0] > 0 and misses >= PRIORITY_SCAN_SLACK:
-                    log.info("govhk IT: %s normal cap reached and no priority job in the "
-                             "last %s items, stopping channel", cfg.govhk_max_jobs, misses)
-                    return drafts
+            # 列表係新->舊：刊登日期已經過期就唔使開詳情頁，即刻收手
+            if _too_old(it.get("posted_at")):
+                log.info("govhk IT: reached posting-date window (%s), stopping channel",
+                         it["posted_at"])
+                return drafts
+            verdict = tally.take(it["title"], skills, cfg)
+            if verdict == "stop":
+                log.info("govhk IT: %s normal cap reached and no priority job in the "
+                         "last %s items, stopping channel", cfg.govhk_max_jobs, tally.misses)
+                return drafts
+            if verdict == "skip":
                 continue          # 唔開詳情頁：軟上限已滿又唔係優先工
-            if room_normal:
-                normal += 1
-            else:
-                priority += 1     # 高分豁免：照收
-            misses = 0
             d = await _fetch_detail(session, it, IT_PLATFORM, "it")
             drafts.append(d)
-            # list is sorted newest-first: first stale job -> stop this channel
+            # 詳情頁有更準嘅日期時再 check 一次（列表冇日期 icon 嘅情況）
             if drafts and _too_old(drafts[-1].posted_at):
                 log.info("govhk IT: reached posting-date window (%s), stopping channel",
                          drafts[-1].posted_at)
@@ -402,7 +505,7 @@ async def _scrape_it(session: BrowserSession, seen: set[str],
                 return drafts
         if page_no % 5 == 0:
             log.info("govhk IT page %s: %s new, %s drafts so far (%s normal + %s priority)",
-                     page_no, len(matches), len(drafts), normal, priority)
+                     page_no, len(matches), len(drafts), tally.normal, tally.priority)
         await human_delay(0.4, 1.0)
 
     return drafts
@@ -410,19 +513,109 @@ async def _scrape_it(session: BrowserSession, seen: set[str],
 
 async def _scrape_general(session: BrowserSession, seen: set[str],
                           cfg: TrackConfig | None = None) -> list[JobDraft]:
-    """一般 track: main quickview (ALL categories) filtered by general keywords.
+    """一般 track: 用 gov.hk 自己嘅搜尋框逐個一般關鍵字搵（server-side filter）。
 
-    Same list/detail format as the gbayes quickview (div.row.item[data-jobcard]).
-    IT-classified titles are excluded; the list is newest-first so the first
-    stale job stops the channel; capped at cfg.govhk_max_jobs per scan
-    （軟上限只計非優先工；高分優先工另有豁免額）。
+    gov.hk 嘅搜尋框（``Criteria.searchField``）係 server-side 過濾，只會回真正
+    命中關鍵字嘅空缺 —— 比舊嘅「揭晒全部 quickview 再自己 filter」快好多。
+    攞唔到搜尋表單 token、或者搜尋完全冇回任何列，就跌落 `_quickview_general`
+    舊路徑（保證仲有工收）。軟上限／優先豁免同其他渠道一樣。
     """
     from .cv_loader import load_skills
 
     cfg = cfg or TrackConfig.defaults("general")
     skills = load_skills()
+    tally = _Tally()
+
+    token = await _fetch_token(session)
+    if token and cfg.keywords:
+        drafts, rows = await _keyword_sweeps(session, seen, cfg, skills, tally, token)
+        # 只有「搜尋機制冇回任何列」至跌落 quickview；filter 完冇工係正常結果
+        if drafts or rows or scan_control.stop_requested():
+            return drafts
+        log.info("govhk general: 關鍵字搜尋冇回任何列，改用 quickview")
+    elif not token:
+        log.info("govhk general: 攞唔到搜尋表單 token，改用 quickview")
+    return await _quickview_general(session, seen, cfg, skills, tally)
+
+
+async def _keyword_sweeps(session: BrowserSession, seen: set[str], cfg: TrackConfig,
+                          skills, tally: _Tally, token: str) -> tuple[list[JobDraft], int]:
+    """逐個一般關鍵字做一次 gov.hk 搜尋，再揭 joblist 分頁。
+
+    回 ``(drafts, 見過嘅列表列數)`` —— 列數 0 = 搜尋機制冇回任何嘢，caller
+    應該跌落 quickview 舊路徑。
+    """
     drafts: list[JobDraft] = []
-    normal = priority = misses = 0
+    rows = 0
+    keywords = [k.strip() for k in cfg.keywords if k.strip()][:KEYWORD_SEARCH_MAX]
+
+    for kw in keywords:
+        if scan_control.stop_requested():
+            break
+        if not await _post_search(session, token, keyword=kw):
+            log.warning("govhk general[%s]: 搜尋失敗，跳過呢個關鍵字", kw)
+            continue
+        for page_no in range(1, MAX_PAGES + 1):
+            if scan_control.stop_requested():
+                return drafts, rows
+            url = f"{JOBLIST_URL}?direct=False&page={page_no}"
+            try:
+                resp = await session.context.request.get(url)
+                page_html = await resp.text()
+                await resp.dispose()
+            except Exception as e:  # noqa: BLE001
+                log.warning("govhk general[%s] list page %s failed: %s", kw, page_no, e)
+                break
+            items = parse_joblist_html(page_html)
+            if not items:
+                break  # past the last page
+            rows += len(items)
+            for it in items:
+                if not it["job_id"] or it["job_id"] in seen:
+                    continue
+                seen.add(it["job_id"])
+                # 列表係新->舊：見到第一份過期就收手（呢個關鍵字同渠道）
+                if _too_old(it.get("posted_at")):
+                    log.info("govhk general[%s]: reached posting-date window (%s), stopping",
+                             kw, it["posted_at"])
+                    return drafts, rows
+                if not (title_matches(it["title"], cfg.keywords)
+                        and classify(it["title"], cfg.it_keywords, cfg.non_it_keywords) == "general"):
+                    continue
+                verdict = tally.take(it["title"], skills, cfg)
+                if verdict == "stop":
+                    log.info("govhk general: %s normal cap reached and no priority job in "
+                             "the last %s items, stopping channel",
+                             cfg.govhk_max_jobs, tally.misses)
+                    return drafts, rows
+                if verdict == "skip":
+                    continue          # 唔開詳情頁：軟上限已滿又唔係優先工
+                d = await _fetch_detail(session, it, GENERAL_PLATFORM, "general")
+                drafts.append(d)
+                if drafts and _too_old(drafts[-1].posted_at):
+                    log.info("govhk general: reached posting-date window (%s), stopping channel",
+                             drafts[-1].posted_at)
+                    return drafts, rows
+                if scan_control.stop_requested():
+                    log.info("govhk general: stop requested mid-item — returning partial drafts")
+                    return drafts, rows
+            if page_no % 5 == 0:
+                log.info("govhk general[%s] page %s: %s rows, %s drafts so far "
+                         "(%s normal + %s priority)",
+                         kw, page_no, len(items), len(drafts), tally.normal, tally.priority)
+            await human_delay(0.5, 1.2)
+
+    return drafts, rows
+
+
+async def _quickview_general(session: BrowserSession, seen: set[str], cfg: TrackConfig,
+                             skills, tally: _Tally) -> list[JobDraft]:
+    """舊路徑：main quickview（全部分類、新->舊）自己 filter 一般 keywords。
+
+    Same list/detail format as the gbayes quickview (div.row.item[data-jobcard]).
+    IT-classified titles are excluded; the first stale job stops the channel.
+    """
+    drafts: list[JobDraft] = []
 
     for page_no in range(1, MAX_PAGES + 1):
         if scan_control.stop_requested():
@@ -447,19 +640,13 @@ async def _scrape_general(session: BrowserSession, seen: set[str],
         ]
         for it in matches:
             seen.add(it["job_id"])
-            room_normal, room_priority = _room_for(it["title"], skills, normal, priority, cfg)
-            if not room_normal and not room_priority:
-                misses += 1
-                if _cap_budget(cfg)[0] > 0 and misses >= PRIORITY_SCAN_SLACK:
-                    log.info("govhk general: %s normal cap reached and no priority job in "
-                             "the last %s items, stopping channel", cfg.govhk_max_jobs, misses)
-                    return drafts
+            verdict = tally.take(it["title"], skills, cfg)
+            if verdict == "stop":
+                log.info("govhk general: %s normal cap reached and no priority job in "
+                         "the last %s items, stopping channel", cfg.govhk_max_jobs, tally.misses)
+                return drafts
+            if verdict == "skip":
                 continue          # 唔開詳情頁：軟上限已滿又唔係優先工
-            if room_normal:
-                normal += 1
-            else:
-                priority += 1     # 高分豁免：照收
-            misses = 0
             d = await _fetch_detail(session, it, GENERAL_PLATFORM, "general")
             drafts.append(d)
             if drafts and _too_old(drafts[-1].posted_at):
@@ -471,7 +658,7 @@ async def _scrape_general(session: BrowserSession, seen: set[str],
                 return drafts
         if page_no % 5 == 0:
             log.info("govhk general page %s: %s new matches, %s drafts so far (%s normal + %s priority)",
-                     page_no, len(matches), len(drafts), normal, priority)
+                     page_no, len(matches), len(drafts), tally.normal, tally.priority)
         await human_delay(0.5, 1.2)
 
     return drafts

@@ -80,19 +80,27 @@ def _govhk_harness(monkeypatch, titles, cfg):
 
     monkeypatch.setattr(scraper_govhk, "_fetch_detail", fake_fetch_detail)
 
+    TOKEN_HTML = '<form><input name="__RequestVerificationToken" value="tok-test" /></form>'
+
     class FakeResp:
+        def __init__(self, text="<html></html>", url=""):
+            self._text = text
+            self.url = url
+
         async def text(self):
-            return "<html></html>"
+            return self._text
 
         async def dispose(self):
             pass
 
     class FakeRequest:
-        async def post(self, *a, **k):
-            return FakeResp()
+        async def post(self, url, *a, **k):
+            return FakeResp(TOKEN_HTML, str(url))
 
-        async def get(self, *a, **k):
-            return FakeResp()
+        async def get(self, url, *a, **k):
+            # 攞 antiforgery token 嘅 GET（冇 page=）要回 joblist 頁
+            text = TOKEN_HTML if "page=" not in str(url) else "<html></html>"
+            return FakeResp(text, str(url))
 
     class FakeSession:
         context = type("Ctx", (), {"request": FakeRequest()})()

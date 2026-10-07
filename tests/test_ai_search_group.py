@@ -33,19 +33,27 @@ def _cfg(**kw) -> TrackConfig:
 # --------------------------------------------------------------- 判斷
 
 def test_ai_search_query_detection(db):
+    db.add(Profile(id=1, ai_search_terms="AI Agent,AI,agentic"))
+    db.commit()
     t = tuning.load_tuning(db)
-    assert tuning.is_ai_search_query("agent", t) is True
     assert tuning.is_ai_search_query("AI", t) is True
+    assert tuning.is_ai_search_query("AI Agent", t) is True
+    assert tuning.is_ai_search_query("agentic", t) is True
+    # 裸 "agent" **唔係** AI 搜尋字詞：佢會拉入 Hotline Agent／Property Agent（112 份噪音）
+    assert tuning.is_ai_search_query("agent", t) is False
     assert tuning.is_ai_search_query("developer", t) is False
     assert tuning.is_ai_search_query("FDE", t) is False
     assert tuning.is_ai_search_query("", t) is False
 
 
 def test_ai_search_terms_default_and_override(db):
-    assert tuning.ai_search_terms(tuning.load_tuning(db)) == ["agent", "AI"]
-    db.add(Profile(id=1, ai_search_terms="agent,AI,LLM"))
+    from app.services.classify import parse_keywords
+
+    assert tuning.ai_search_terms(tuning.load_tuning(db)) == \
+        parse_keywords(settings.AI_SEARCH_TERMS)
+    db.add(Profile(id=1, ai_search_terms="AI Agent,AI,LLM"))
     db.commit()
-    assert tuning.ai_search_terms(tuning.load_tuning(db)) == ["agent", "AI", "LLM"]
+    assert tuning.ai_search_terms(tuning.load_tuning(db)) == ["AI Agent", "AI", "LLM"]
 
 
 def test_ai_group_max_age(db):
